@@ -129,11 +129,11 @@
     };
     const normalize = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g,'');
     const units = value => {
-      const found = [...String(value || '').matchAll(/\b(?:apartment|apt|unit|suite|ste)(?:\s+|(?=[#-])|(?=[a-z]?\d))\s*[#-]?\s*([^,]+)|#\s*([^,]+)/gi)];
+      const found = [...String(value || '').matchAll(/\b(?:apartment|apt|unit|suite|ste)(?:\s+|(?=[#-])|(?=[a-z]?\d))\s*[#-]?\s*([\s\S]+)|#\s*([\s\S]+)/gi)];
       const result = [];
       for (const match of found) {
         // Reject ambiguous suffixes instead of normalizing another unit.
-        const token = /^(\w+)(?:\s+Portland\b.*)?\s*$/i.exec((match[1] || match[2]).trim());
+        const token = /^([a-z0-9]+)(?:(?:\s*,\s*|\s+)Portland\b[\s\S]*)?\s*$/i.exec((match[1] || match[2]).trim());
         if (!token || !/^[a-z0-9]+$/i.test(token[1])) return null;
         result.push(token[1].toLowerCase());
       }
