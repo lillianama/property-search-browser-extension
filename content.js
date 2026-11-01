@@ -1,5 +1,5 @@
 (() => {
-  let generation = 0, timer, scheduledAt = Infinity, route = location.href, pending = null, saved = '', statusNode;
+  let generation = 0, timer, scheduledAt = Infinity, route = location.href, pending = null, saved = '', statusNode, intakePending = null;
   function showStatus(message, state = 'working') {
     if (!document.body) return;
     if (!statusNode) {
@@ -27,7 +27,7 @@
   }
   function routeChanged() {
     if (route !== location.href) {
-      route = location.href; generation++; pending = null; saved = ''; clearStatus();
+      route = location.href; generation++; pending = null; intakePending = null; saved = ''; clearStatus();
       if (ZillowExtract.identity(route)) showStatus('Zillow listing detected. Reading details…');
       schedule();
     }
@@ -36,6 +36,33 @@
   function extract(start) {
     readFailure = '';
     return ZillowExtract.collect(document, start, getComputedStyle, reason => { readFailure = reason; });
+  }
+  function offerIntake(observation, key, start, turn) {
+    if (!observation.legacyUrl || !statusNode?.appendChild) return;
+    const select=document.createElement('select'); let chosenTrack='';
+    select.addEventListener('change',event => { chosenTrack=event.isTrusted && ['house','plex'].includes(select.value) ? select.value : ''; });
+    for (const [value,label] of [['','Choose track'],['house','House / condo'],['plex','Plex']]) {
+      const option=document.createElement('option'); option.value=value; option.textContent=label; select.appendChild(option);
+    }
+    if (intakePending?.key===key) { select.value=intakePending.body.track; chosenTrack=intakePending.body.track; select.disabled=true; }
+    const button=document.createElement('button'); button.type='button'; button.textContent='Add to Watchlist';
+    button.addEventListener('click',async event => {
+      if (!event.isTrusted || !['house','plex'].includes(chosenTrack) || select.value!==chosenTrack || button.disabled) return;
+      event.stopPropagation();
+      const current=extract(start);
+      if (location.href!==start || generation!==turn || !current || fingerprint(current)!==key || current.legacyUrl!==observation.legacyUrl) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
+      if (!intakePending || intakePending.key!==key || intakePending.body.track!==chosenTrack) intakePending={key,body:{action:'watchlist-intake',zpid:observation.zpid,url:observation.url,legacyUrl:observation.legacyUrl,captureId:crypto.randomUUID(),observedAt:new Date().toISOString(),track:chosenTrack,identity:Object.fromEntries([['mlsNumber',observation.fields?.mls_number],['parcelId',observation.fields?.parcel_id]].filter(([,v])=>typeof v==='string' && /^[A-Za-z0-9-]{1,40}$/.test(v))),listing:{status:observation.status,...(observation.price===undefined?{}:{price:observation.price})}}};
+      const request=intakePending; button.disabled=true; select.disabled=true;
+      let result; try { result=await chrome.runtime.sendMessage({type:'watchlist-intake',observation,intake:request.body}); } catch {}
+      if (location.href!==start || generation!==turn || intakePending!==request) return;
+      const after=extract(start);
+      if (!after || fingerprint(after)!==key || location.href!==start) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
+      if (result?.ok && result.status==='created') { intakePending=null; saved=''; showStatus('Added to Watchlist. Saving listing details…'); schedule(0); }
+      else if (result?.ok && result.status==='existing') { intakePending=null; showStatus('Already tracked; existing decisions preserved.','success'); }
+      else if (result?.ok && result.status==='conflict') { intakePending=null; showStatus('Listing identity needs review.','warning'); }
+      else { button.disabled=false; select.disabled=true; button.textContent='Retry Add to Watchlist'; }
+    });
+    statusNode.appendChild(select); statusNode.appendChild(button);
   }
   async function capture() {
     routeChanged();
@@ -85,6 +112,7 @@
     } else {
       const messages = {settings:'Check extension settings and site permission.', authorization:'Dashboard authorization failed; check extension settings.', network:'Dashboard unavailable; retrying.', 'not-tracked':'This listing is not tracked.', oversized:'A listing detail exceeds the supported capture size; capture is incomplete.', invalid:'A listing detail was rejected; capture is incomplete.'};
       showStatus(messages[result?.reason] || 'Could not save listing; retrying.', 'warning');
+      if (result?.reason === 'not-tracked') { offerIntake(observation,key,start,turn); return; }
       current.attempts++;
       const delay = Math.min(60000, 1000 * 2 ** Math.min(current.attempts, 6));
       current.retryAt = Date.now() + delay; schedule(delay);
