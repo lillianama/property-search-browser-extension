@@ -29,6 +29,9 @@ test('only verified apartment ranges emit separate read-only candidates without 
  for(const options of [{homeType:null},{homeType:'CONDO'},{homeType:'APARTMENT',cacheStreet:'1630-1633 NE 81st Ave'},{homeType:'APARTMENT',heading:'1630-1632 NE 81st Ave Apt 1'},{homeType:'APARTMENT',street:'1630-1632 NE 81st Ave Apt 1'}]){
   const f=fixture(options);let candidate;extract.collect(f.document,f.url,f.style,()=>{},x=>candidate=x);assert.equal(candidate,undefined);
  }
+ for(const suffix of ['Floor 2','Fl 2','Room 1','Rm 1','Lot 1','A','#2',', Portland, OR 97212']) {
+  const f=fixture({homeType:'APARTMENT',heading:'1630-1632 NE 81st Ave '+suffix});let candidate;extract.collect(f.document,f.url,f.style,()=>{},x=>candidate=x);assert.equal(candidate,undefined,suffix);
+ }
  for(const suffix of ['Apt-1','Unit-1','Suite-1']) assert.equal(extract.validTracking({...c,legacyUrl:c.legacyUrl.replace('-Portland',`-${suffix}-Portland`)}),false);
 });
 const fs=require('node:fs'),vm=require('node:vm');

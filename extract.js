@@ -219,6 +219,9 @@
       if (structuredIdentity && identity(canonical?.href || '') === zpid
         && observation.fields?.property_type === 'APARTMENT' && observation.legacyUrl
         && headings.length === 1 && headingMatches(headings[0].innerText, street)
+        // Only the exact street plus optional published locality is recognized.
+        // Extra floor/room/lot or bare unit suffixes must not be discarded.
+        && [street, `${street} Portland OR`, `${street} Portland OR ${addressObjects[0].postalCode}`].some(value => normalize(value) === normalize(headings[0].innerText))
         && units(street)?.length === 0 && units(headings[0].innerText)?.length === 0) {
         const candidate = {action:'tracking-lookup',scope:'apartment-range',zpid,url:observation.url,legacyUrl:observation.legacyUrl,
           identity:Object.fromEntries([['mlsNumber',observation.fields.mls_number],['parcelId',observation.fields.parcel_id]].filter(([,v])=>v !== undefined))};
