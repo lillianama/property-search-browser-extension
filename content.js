@@ -1,5 +1,5 @@
 (() => {
-  let generation = 0, timer, scheduledAt = Infinity, route = location.href, pending = null, saved = '', statusNode, intakePending = null, intakeChoice = null;
+  let generation = 0, timer, scheduledAt = Infinity, route = ZillowExtract.identity(location.href), pending = null, saved = '', statusNode, intakePending = null, intakeChoice = null;
   function showStatus(message, state = 'working') {
     if (!document.body) return;
     if (!statusNode) {
@@ -26,11 +26,15 @@
     timer = setTimeout(() => { timer = null; scheduledAt = Infinity; capture(); }, delay);
   }
   function routeChanged() {
-    if (route !== location.href) {
-      route = location.href; generation++; pending = null; intakePending = null; intakeChoice = null; saved = ''; clearStatus();
-      if (ZillowExtract.identity(route)) showStatus('Zillow listing detected. Reading details…');
+    if (route !== ZillowExtract.identity(location.href)) {
+      route = ZillowExtract.identity(location.href); generation++; pending = null; intakePending = null; intakeChoice = null; saved = ''; clearStatus();
+      if (route) showStatus('Zillow listing detected. Reading details…');
       schedule();
     }
+  }
+  function isCurrent(start, turn) {
+    routeChanged();
+    return generation === turn && ZillowExtract.identity(start) === route;
   }
   let readFailure = '';
   function extract(start) {
@@ -87,13 +91,13 @@
       if (!event.isTrusted || !['house','plex'].includes(chosenTrack) || button.disabled) return;
       event.stopPropagation();
       const current=extract(start);
-      if (location.href!==start || generation!==turn || !current || fingerprint(current)!==key || current.legacyUrl!==observation.legacyUrl) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
+      if (!isCurrent(start,turn) || !current || fingerprint(current)!==key || current.legacyUrl!==observation.legacyUrl) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
       if (!intakePending || intakePending.key!==key || intakePending.body.track!==chosenTrack) intakePending={key,body:{action:'watchlist-intake',zpid:observation.zpid,url:observation.url,legacyUrl:observation.legacyUrl,captureId:crypto.randomUUID(),observedAt:new Date().toISOString(),track:chosenTrack,identity:Object.fromEntries([['mlsNumber',observation.fields?.mls_number],['parcelId',observation.fields?.parcel_id]].filter(([,v])=>typeof v==='string' && /^[A-Za-z0-9-]{1,40}$/.test(v))),listing:{status:observation.status,...(observation.price===undefined?{}:{price:observation.price})}}};
       const request=intakePending; button.disabled=true; radios.forEach(radio=>{radio.disabled=true;});
       let result; try { result=await chrome.runtime.sendMessage({type:'watchlist-intake',observation,intake:request.body}); } catch {}
-      if (location.href!==start || generation!==turn || intakePending!==request) return;
+      if (!isCurrent(start,turn) || intakePending!==request) return;
       const after=extract(start);
-      if (!after || fingerprint(after)!==key || location.href!==start) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
+      if (!after || fingerprint(after)!==key || !isCurrent(start,turn)) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
       if (result?.ok && result.status==='created') { intakePending=null; saved=''; showStatus('Added to Watchlist. Saving listing details…'); schedule(0); }
       else if (result?.ok && result.status==='existing') { intakePending=null; showStatus('Already tracked; existing decisions preserved.','success'); }
       else if (result?.ok && result.status==='conflict') { intakePending=null; showStatus('Listing identity needs review.','warning'); }
@@ -106,7 +110,7 @@
     const start = location.href, id = ZillowExtract.identity(start), turn = generation;
     if (!id) return;
     const observation = extract(start);
-    if (location.href !== start || turn !== generation) return;
+    if (!isCurrent(start,turn)) return;
     if (!observation) {
       const reasons = {
         identity:'Listing URL not recognized',
@@ -140,9 +144,9 @@
     let result;
     try { result = await chrome.runtime.sendMessage({type:'observe', observation:current.observation}); } catch { /* retry below */ }
     current.inFlight = false;
-    if (location.href !== start || turn !== generation || pending !== current) return;
+    if (!isCurrent(start,turn) || pending !== current) return;
     const displayed = extract(start);
-    if (location.href !== start || !displayed || fingerprint(displayed) !== key) { pending = null; schedule(); return; }
+    if (!isCurrent(start,turn) || !displayed || fingerprint(displayed) !== key) { pending = null; schedule(); return; }
     if (result?.ok === true && Array.isArray(result.changedFields) && result.changedFields.every(x => capturedFields.has(x))) {
       saved = key; pending = null;
       showStatus(result.changedFields.length ? `Saved ${new Set(result.changedFields).size} ${new Set(result.changedFields).size === 1 ? 'detail' : 'details'}.` : 'Checked; no changes.', 'success');
@@ -160,6 +164,6 @@
     routeChanged(); schedule();
   }).observe(document.documentElement,{childList:true,subtree:true,characterData:true});
   setInterval(routeChanged,500);
-  if (ZillowExtract.identity(route)) showStatus('Zillow listing detected. Reading details…');
+  if (route) showStatus('Zillow listing detected. Reading details…');
   schedule();
 })();
