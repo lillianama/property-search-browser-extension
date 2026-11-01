@@ -27,7 +27,7 @@
   }
   function routeChanged() {
     if (route !== ZillowExtract.identity(location.href)) {
-      route = ZillowExtract.identity(location.href); generation++; pending = null; intakePending = null; intakeChoice = null; saved = ''; clearStatus();
+      route = ZillowExtract.identity(location.href); generation++; pending = null; intakePending = null; intakeChoice = null; saved = ''; trackingPending = null; clearStatus();
       if (route) showStatus('Zillow listing detected. Reading details…');
       schedule();
     }
@@ -36,10 +36,10 @@
     routeChanged();
     return generation === turn && ZillowExtract.identity(start) === route;
   }
-  let readFailure = '';
+  let readFailure = '', trackingCandidate = null, trackingPending = null;
   function extract(start) {
-    readFailure = '';
-    return ZillowExtract.collect(document, start, getComputedStyle, reason => { readFailure = reason; });
+    readFailure = ''; trackingCandidate = null;
+    return ZillowExtract.collect(document, start, getComputedStyle, reason => { readFailure = reason; }, candidate => { trackingCandidate = candidate; });
   }
   function offerIntake(observation, key, start, turn) {
     if (!observation.legacyUrl || !statusNode?.appendChild) return;
@@ -112,6 +112,26 @@
     const observation = extract(start);
     if (!isCurrent(start,turn)) return;
     if (!observation) {
+      if (trackingCandidate) {
+        const candidate = trackingCandidate, key = JSON.stringify(candidate);
+        if (!trackingPending || trackingPending.key !== key || trackingPending.turn !== turn) trackingPending = {key,turn,inFlight:false,retryAt:0,attempts:0,result:null};
+        const current = trackingPending;
+        const render = tracked => showStatus(tracked ? 'Whole property tracked; apartment capture blocked' : 'Whole-property tracking unconfirmed; apartment capture blocked', tracked ? 'success' : 'warning');
+        if (current.result !== null) { render(current.result); return; }
+        if (current.inFlight) return;
+        if (current.retryAt > Date.now()) { schedule(current.retryAt-Date.now()); return; }
+        current.inFlight = true;
+        showStatus('Checking whole-property tracking; apartment capture blocked');
+        let result; try { result = await chrome.runtime.sendMessage({type:'tracking-lookup',candidate}); } catch {}
+        current.inFlight = false;
+        if (!isCurrent(start,turn) || trackingPending !== current) return;
+        extract(start);
+        if (!trackingCandidate || JSON.stringify(trackingCandidate) !== key) { trackingPending = null; schedule(); return; }
+        if (result?.ok === true && typeof result.tracked === 'boolean') { current.result = result.tracked; render(result.tracked); }
+        else { showStatus('Whole-property tracking unavailable; apartment capture blocked','warning'); current.retryAt = Date.now()+Math.min(60000,1000*2**Math.min(++current.attempts,6)); schedule(current.retryAt-Date.now()); }
+        return;
+      }
+      trackingPending = null;
       const reasons = {
         identity:'Listing URL not recognized',
         'listing-scope':'Range listing scope is apartment-only or unverified; whole-property capture is blocked',

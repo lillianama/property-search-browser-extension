@@ -119,7 +119,18 @@
     const price = sale ? [...prices][0] : undefined;
     return {zpid,url:`https://www.zillow.com/homedetails/${zpid}_zpid/`,observedAt:new Date().toISOString(),status,...(price ? {price} : {})};
   }
-  function collect(document, url, style, diagnostic = () => {}) {
+  // Read-only candidates contain no apartment facts or capture authorization.
+  function validTracking(o) {
+    if (!o || Object.keys(o).sort().join(',') !== 'action,identity,legacyUrl,scope,url,zpid'
+      || o.action !== 'tracking-lookup' || o.scope !== 'apartment-range'
+      || typeof o.zpid !== 'string' || !identity(o.url) || o.url !== `https://www.zillow.com/homedetails/${o.zpid}_zpid/`
+      || typeof o.legacyUrl !== 'string') return false;
+    const range = /^https:\/\/www\.zillow\.com\/homes\/([1-9]\d{0,6})-([1-9]\d{0,6})-([A-Za-z][A-Za-z0-9-]{2,120})-Portland-OR-(97\d{3})_rb\/$/.exec(o.legacyUrl);
+    if (!range || Number(range[1]) >= Number(range[2]) || /(?:^|-)(?:apt|apartment|unit|suite|ste|floor|fl|room|rm|lot)(?:-|$)/i.test(range[3])) return false;
+    return !!o.identity && typeof o.identity === 'object' && !Array.isArray(o.identity)
+      && Object.entries(o.identity).every(([k,v])=>['mlsNumber','parcelId'].includes(k) && typeof v === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(v));
+  }
+  function collect(document, url, style, diagnostic = () => {}, tracking = () => {}) {
     const fail = reason => { diagnostic(reason); return null; };
     const zpid = identity(url); if (!zpid) return fail('identity');
     const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')].map(x => x.textContent);
@@ -204,7 +215,17 @@
     // A range can label one rental apartment as well as the entire plex. Only
     // identity-bound whole-property data can authorize captures for a range.
     if (/^\d+\s*-\s*\d+\b/.test(street || '')
-      && !/^multi_?family$/i.test(observation.fields?.property_type || '')) return fail('listing-scope');
+      && !/^multi_?family$/i.test(observation.fields?.property_type || '')) {
+      if (structuredIdentity && identity(canonical?.href || '') === zpid
+        && observation.fields?.property_type === 'APARTMENT' && observation.legacyUrl
+        && headings.length === 1 && headingMatches(headings[0].innerText, street)
+        && units(street)?.length === 0 && units(headings[0].innerText)?.length === 0) {
+        const candidate = {action:'tracking-lookup',scope:'apartment-range',zpid,url:observation.url,legacyUrl:observation.legacyUrl,
+          identity:Object.fromEntries([['mlsNumber',observation.fields.mls_number],['parcelId',observation.fields.parcel_id]].filter(([,v])=>v !== undefined))};
+        if (validTracking(candidate)) tracking(candidate);
+      }
+      return fail('listing-scope');
+    }
     if (root.ZillowDomFields) {
       const scopedVisible = node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid);
       const dom = root.ZillowDomFields.collect(roots[0],scopedVisible);
@@ -239,6 +260,6 @@
     }
     return observation;
   }
-  root.ZillowExtract = {identity,extract,collect,projectCache,legacyUrl};
+  root.ZillowExtract = {identity,extract,collect,projectCache,legacyUrl,validTracking};
   if (typeof module !== 'undefined') module.exports = root.ZillowExtract;
 })(globalThis);
