@@ -5,8 +5,9 @@
   function extract(url, scripts, evidence) {
     const zpid = identity(url); if (!zpid || !evidence || !Array.isArray(evidence.status) || !Array.isArray(evidence.price)) return null;
     let status;
-    if (evidence.status.some(text => /^for sale$/i.test(text.trim()))) status = 'Active';
-    else if (evidence.status.some(text => /^(?:pending|contingent)$/i.test(text.trim()))) status = 'Pending';
+    if (evidence.status.some(text => /\b(?:for\s+rent|sold|off[\s-]+market)\b/i.test(text))) return null;
+    if (evidence.status.some(text => /^(?:pending|contingent)$/i.test(text.trim()))) status = 'Pending';
+    else if (evidence.status.some(text => /^for sale$/i.test(text.trim()))) status = 'Active';
     else return null;
     let price, matched = false;
     for (const script of scripts) {
