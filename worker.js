@@ -8,16 +8,17 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
     const tab = await chrome.tabs.get(sender.tab.id); if (ZillowExtract.identity(tab.url) !== id) return {ok:false};
     await storageReady;
     const {origin,token} = await chrome.storage.local.get(['origin','token']);
-    let u; try { u = new URL(origin); } catch { return {ok:false}; }
-    if (u.protocol !== 'https:' || u.origin !== origin || !token || !await chrome.permissions.contains({origins:[origin+'/*']})) return {ok:false};
+    let u; try { u = new URL(origin); } catch { return {ok:false, reason:'settings'}; }
+    if (u.protocol !== 'https:' || u.origin !== origin || !token || !await chrome.permissions.contains({origins:[origin+'/*']})) return {ok:false, reason:'settings'};
     const body = JSON.stringify(o);
     let response;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (ZillowExtract.identity((await chrome.tabs.get(sender.tab.id)).url) !== id) return {ok:false};
       try { response = await fetch(origin+'/api/browser-observations',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body,redirect:'error',signal:AbortSignal.timeout(15000)}); if (response.ok || response.status < 500) break; } catch { /* retry the identical capture */ }
     }
-    if (!response?.ok) return {ok:false};
+    if (!response?.ok) return {ok:false, reason:response?.status === 401 || response?.status === 403 ? 'authorization' : 'network'};
     const data = await response.json();
+    if (data.matched === false && Array.isArray(data.changedFields) && data.changedFields.length === 0) return {ok:false, reason:'not-tracked'};
     if (data.matched !== true || data.zpid !== id || !Array.isArray(data.changedFields) || !data.changedFields.every(x => x === 'price' || x === 'status')) return {ok:false};
     return {ok:true,changedFields:data.changedFields.filter(x => x === 'price' || x === 'status')};
   })().then(sendResponse,() => sendResponse({ok:false})); return true;

@@ -47,23 +47,27 @@
     for (const script of scripts) {
       let data; try { data = JSON.parse(script); } catch { continue; }
       for (const item of Array.isArray(data) ? data : [data]) {
-        if (item && identity(item.url || item['@id'] || '') === zpid && typeof item.address?.streetAddress === 'string') addresses.push(normalize(item.address.streetAddress));
+        if (item && identity(item.url || item['@id'] || '') === zpid) {
+          for (const address of [item.address, item.offers?.itemOffered?.address]) {
+            if (typeof address?.streetAddress === 'string') addresses.push(normalize(address.streetAddress));
+          }
+        }
       }
     }
     const canonical = document.querySelector('link[rel="canonical"]');
     // Bind evidence either to an explicitly identified listing container or to
     // the unique detail view with both canonical identity and a matching address.
-    const candidates = [...document.querySelectorAll('[data-zpid], #hdp-content')].filter(node => {
+    const candidates = [...document.querySelectorAll('[data-zpid], #hdp-content, #layout-wrapper')].filter(node => {
       if (!visible(node)) return false;
       const ownId = node.getAttribute('data-zpid');
       if (ownId) return ownId === zpid;
-      return node.id === 'hdp-content' && identity(canonical?.href || '') === zpid &&
+      return (node.id === 'hdp-content' || node.id === 'layout-wrapper') && identity(canonical?.href || '') === zpid && new Set(addresses).size === 1 &&
         [...node.querySelectorAll('h1')].some(h => visible(h) && addresses.some(a => a.length >= 6 && normalize(h.innerText).includes(a)));
     });
     const roots = candidates.filter(node => !candidates.some(other => other !== node && other.contains(node)));
     if (roots.length !== 1) return null;
     const scoped = selector => [...roots[0].querySelectorAll(selector)].filter(node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)).map(node => node.innerText || '');
-    return extract(url, scripts, {status:scoped('[data-testid="home-details-chip"]'),price:scoped('[data-testid="price"]')});
+    return extract(url, scripts, {status:scoped('[data-testid="home-details-chip"], [data-testid="gallery-status-pill"]'),price:scoped('[data-testid="price"]')});
   }
   root.ZillowExtract = {identity,extract,collect};
   if (typeof module !== 'undefined') module.exports = root.ZillowExtract;
