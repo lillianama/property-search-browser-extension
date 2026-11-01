@@ -3,10 +3,10 @@
     try { const u = new URL(url); const m = u.pathname.match(/^\/homedetails\/(?:[^/]*\/)?([1-9]\d{0,19})_zpid\/?$/); return u.origin === 'https://www.zillow.com' && !u.username && !u.password && m ? m[1] : null; } catch { return null; }
   }
   function legacyUrl(address) {
-    if (!address || !/^[0-9][A-Za-z0-9 ]{4,119}$/.test(address.streetAddress || '')
+    if (!address || !/^[0-9][A-Za-z0-9, ]{4,119}$/.test(address.streetAddress || '')
       || !/^[A-Za-z][A-Za-z ]{1,59}$/.test(address.addressLocality || '')
       || !/^[A-Z]{2}$/.test(address.addressRegion || '') || !/^\d{5}$/.test(address.postalCode || '')) return null;
-    const slug = [address.streetAddress,address.addressLocality,address.addressRegion,address.postalCode].map(x=>x.trim().replace(/ +/g,'-')).join('-');
+    const slug = [address.streetAddress,address.addressLocality,address.addressRegion,address.postalCode].map(x=>x.trim().replace(/[, ]+/g,'-')).join('-');
     return `https://www.zillow.com/homes/${slug}_rb/`;
   }
   // Only explicitly named property data may leave the page. In particular,
@@ -128,6 +128,18 @@
       return true;
     };
     const normalize = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const units = value => {
+      const found = [...String(value || '').matchAll(/\b(?:apartment|apt|unit|suite|ste)(?:\s+|(?=[#-])|(?=[a-z]?\d))\s*[#-]?\s*([^,]+)|#\s*([^,]+)/gi)];
+      const result = [];
+      for (const match of found) {
+        // Reject ambiguous suffixes instead of normalizing another unit.
+        const token = /^(\w+)(?:\s+Portland\b.*)?\s*$/i.exec((match[1] || match[2]).trim());
+        if (!token || !/^[a-z0-9]+$/i.test(token[1])) return null;
+        result.push(token[1].toLowerCase());
+      }
+      return result;
+    };
+    const headingMatches = (heading, street) => { const tokens=s=>String(s || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); const a=tokens(street), b=tokens(heading), u=units(street), v=units(heading); return !!a && u!==null && v!==null && u.length<=1 && v.length<=1 && JSON.stringify(u)===JSON.stringify(v) && (` ${b} `).includes(` ${a} `); };
     const addresses = [], addressObjects = []; let structuredIdentity = false;
     for (const script of scripts) {
       let data; try { data = JSON.parse(script); } catch { continue; }
@@ -153,7 +165,7 @@
       else if (!structuredIdentity) { if (!explicit.length) return fail('structured-identity'); }
       else if (new Set(addresses).size !== 1 || addresses[0].length < 6) { if (!explicit.length) return fail('structured-address'); }
       else {
-        const matching = fallback.filter(node => [...node.querySelectorAll('h1')].some(h => visible(h) && normalize(h.innerText).includes(addresses[0])));
+        const matching = fallback.filter(node => [...node.querySelectorAll('h1')].some(h => visible(h) && headingMatches(h.innerText,addressObjects[0]?.streetAddress)));
         if (!matching.length && !explicit.length) return fail('heading-mismatch');
         candidates = [...explicit, ...matching];
       }
@@ -161,12 +173,15 @@
     const roots = candidates.filter(node => !candidates.some(other => other !== node && other.contains(node)));
     if (!roots.length) return fail('no-visible-container');
     if (roots.length !== 1) return fail('ambiguous-container');
+    const street=addressObjects[0]?.streetAddress;
+    const headings=[...roots[0].querySelectorAll('h1')].filter(visible);
+    if (street && ((units(street)?.length ?? 1) || headings.some(h=>(units(h.innerText)?.length ?? 1))) && !headings.some(h=>headingMatches(h.innerText,street))) return fail('heading-mismatch');
     const scoped = selector => [...roots[0].querySelectorAll(selector)].filter(node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)).map(node => node.innerText || '');
     // Showcase uses a separate overview header. Never read history or nearby
     // home-status/price-text nodes outside that identity-bound overview.
     const overviews = [...roots[0].querySelectorAll('[data-testid="property-overview"]')].filter(node => visible(node)
       && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)
-      && [...node.querySelectorAll('h1')].some(h=>visible(h) && addresses.length && normalize(h.innerText).includes(addresses[0])));
+      && [...node.querySelectorAll('h1')].some(h=>visible(h) && addresses.length && headingMatches(h.innerText,addressObjects[0]?.streetAddress)));
     if (overviews.length > 1) return fail('ambiguous-container');
     const overview = overviews[0];
     const headerText = selector => overview ? [...overview.querySelectorAll(selector)].filter(node=>visible(node)
@@ -176,7 +191,7 @@
     if (!observation) return null;
     const sourceUrls = addressObjects.map(legacyUrl);
     if (sourceUrls.length && sourceUrls.every(x=>x && x === sourceUrls[0])
-      && [...roots[0].querySelectorAll('h1')].some(h=>visible(h) && normalize(h.innerText).includes(addresses[0]))) observation.legacyUrl = sourceUrls[0];
+      && [...roots[0].querySelectorAll('h1')].some(h=>visible(h) && headingMatches(h.innerText,addressObjects[0]?.streetAddress))) observation.legacyUrl = sourceUrls[0];
     const next = document.querySelector('script#__NEXT_DATA__');
     if (next && addressObjects.length && new Set(addresses).size === 1) {
       const fields = projectCache(next.textContent, zpid, addressObjects[0]);

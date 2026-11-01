@@ -208,3 +208,56 @@ test('production scripts load the DOM collector and request builder before the o
   assert.deepEqual(manifest.web_accessible_resources,[{resources:['icons/nova-32.png'],matches:['https://www.zillow.com/*']}]);
   for (const n of [16,32,48,128]) assert.ok(fs.existsSync(manifest.icons[n]));
 });
+
+test('legacy condo aliases retain complete unit tokens', () => {
+  const address={streetAddress:'920 NW Naito Pkwy, Apt J25',addressLocality:'Portland',addressRegion:'OR',postalCode:'97209'};
+  assert.equal(extract.legacyUrl(address),'https://www.zillow.com/homes/920-NW-Naito-Pkwy-Apt-J25-Portland-OR-97209_rb/');
+  for (const unit of ['J2','J250','25']) assert.notEqual(extract.legacyUrl({...address,streetAddress:`920 NW Naito Pkwy, Apt ${unit}`}),extract.legacyUrl(address));
+});
+
+test('intake worker checks top frame and current tab and retries immutable body', async()=>{
+  let listener, current=url, bodies=[], failures=0;
+  const chrome={runtime:{id:'extension',onMessage:{addListener:f=>listener=f}},storage:{local:{setAccessLevel:async()=>{},get:async()=>({origin:'https://dashboard.test',token:'secret'})}},tabs:{get:async()=>({url:current})},permissions:{contains:async()=>true}};
+  const context={chrome,URL,AbortSignal,TextEncoder,importScripts:()=>{},ZillowExtract:extract,fetch:async(_u,init)=>{bodies.push(init.body);if(!failures++)throw Error('lost response');return {ok:true,json:async()=>({status:'created',zpid:'123'})}}};
+  vm.runInNewContext(fs.readFileSync('worker.js','utf8'),context);
+  const source='https://www.zillow.com/homes/123-Example-St-Portland-OR-97209_rb/';
+  const observation={zpid:'123',url:'https://www.zillow.com/homedetails/123_zpid/',legacyUrl:source,status:'Active',price:500000};
+  const intake={action:'watchlist-intake',zpid:'123',url:observation.url,legacyUrl:source,captureId:'11111111-1111-4111-8111-111111111111',observedAt:new Date().toISOString(),track:'house',identity:{},listing:{status:'Active',price:500000}};
+  const sender={id:'extension',frameId:0,tab:{id:1,url},url};
+  const send=(message,from=sender)=>new Promise(resolve=>listener(message,from,resolve));
+  assert.equal((await send({type:'watchlist-intake',observation,intake},{...sender,frameId:1})).ok,false);
+  assert.equal((await send({type:'watchlist-intake',observation,intake:{...intake,legacyUrl:source.replace('123','456')}})).ok,false);
+  current=url.replace('123','456');assert.equal((await send({type:'watchlist-intake',observation,intake})).ok,false);assert.equal(bodies.length,0);
+  current=url;assert.equal((await send({type:'watchlist-intake',observation,intake})).status,'created');assert.equal(bodies.length,2);assert.equal(bodies[0],bodies[1]);
+});
+
+test('only trusted click after explicit track choice requests intake and navigation invalidates it',async()=>{
+  let timer, buttons=[], select, messages=[], observeCount=0, statusNode, now=Date.now();
+  function element(tag){const node={style:{},children:[],setAttribute(){},contains(){return false},remove(){},appendChild(c){this.children.push(c);if(c.tag==='button')buttons.push(c);if(c.tag==='select')select=c},tag,value:'',addEventListener(_name,fn){this.handler=fn},set textContent(v){this.text=v;this.children=[]},get textContent(){return this.text||''}};return node}
+  const location={href:url};const source='https://www.zillow.com/homes/123-Example-St-Portland-OR-97209_rb/';
+  const observed={zpid:'123',url:'https://www.zillow.com/homedetails/123_zpid/',legacyUrl:source,status:'Active',price:500000,observedAt:new Date().toISOString(),fields:{}};
+  const document={documentElement:{},body:{appendChild(n){statusNode=n}},createElement:element};
+  const chrome={runtime:{sendMessage:async m=>{messages.push(m);if(m.type!=='observe')return {ok:true,status:'created'};observeCount++;return observeCount<=2?{ok:false,reason:'not-tracked'}:observeCount===3?{ok:false,reason:'network'}:{ok:true,changedFields:['bedrooms']}}}};
+  const ctx={location,document,chrome,ZillowCaptureRequests:captureRequests,ZillowExtract:{...extract,collect:()=>observed},getComputedStyle:()=>({}),crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'},Date:class extends Date {static now(){return now}},MutationObserver:class{observe(){}},setTimeout:f=>{timer=f;return 1},clearTimeout(){},setInterval(){}};
+  vm.runInNewContext(fs.readFileSync('content.js','utf8'),ctx);await timer();await flush();
+  assert.equal(messages.length,1);let b=buttons.at(-1);assert.ok(b);
+  await b.handler({isTrusted:false,stopPropagation(){}});assert.equal(messages.length,1);
+  await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
+  select.value='house';await select.handler({isTrusted:false});await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
+  await select.handler({isTrusted:true});location.href=url.replace('123','456');await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
+  location.href=url;await timer();await flush();b=buttons.at(-1);select.value='house';await select.handler({isTrusted:true});await b.handler({isTrusted:true,stopPropagation(){}});
+  assert.equal(messages.length,3);assert.equal(messages[2].type,'watchlist-intake');assert.equal(messages[2].intake.track,'house');
+  assert.match(statusNode.textContent,/Saving listing details/);const before=messages[1].observation.captures; await timer(); await flush(); assert.equal(messages[3].type,'observe');assert.deepEqual(messages[3].observation.captures,before);assert.match(statusNode.textContent,/Dashboard unavailable/);now+=5000;await timer();await flush();assert.deepEqual(messages[4].observation.captures,before);assert.match(statusNode.textContent,/Saved 1 detail/);
+});
+
+test('structured and visible address unit evidence must agree in both directions',()=>{
+  const fixture=require('./condo-fixture.cjs').fixture;
+  const styleFor=(street,heading,explicit=false)=>{const c={street,zip:'97209',zpid:'62966567',mls:'519250596'},f=fixture(c);f.document.querySelector('h1').textContent=heading;if(explicit)f.document.querySelector('#layout-wrapper').setAttribute('data-zpid',c.zpid);return extract.collect(f.document,f.url,f.style)};
+  for(const explicit of [false,true]){
+    assert.equal(styleFor('920 NW Naito Pkwy','920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit),null);
+    assert.equal(styleFor('920 NW Naito Pkwy, Apt J25','920 NW Naito Pkwy, Portland, OR 97209',explicit),null);
+    for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A'])assert.equal(styleFor('920 NW Naito Pkwy, Apt J25',`920 NW Naito Pkwy, Apt ${unit}, Portland, OR 97209`,explicit),null);
+    for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A']) assert.equal(styleFor(`920 NW Naito Pkwy, Apt ${unit}`,'920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit),null);
+    assert.equal(styleFor('920 NW Naito Pkwy, Apt J25','920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit).zpid,'62966567');
+  }
+});
