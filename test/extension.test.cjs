@@ -105,7 +105,7 @@ test('manifest limits permissions to Zillow and optional HTTPS origins', () => {
 function harness(start='https://www.zillow.com/portland-or/') {
   let timer, interval, mutation, now=0, next=0, appended=0, toastText='', beforeExtract=()=>{};
   const location={href:start}, messages=[];
-  const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:script}] : [{innerText:sel.includes('chip') ? 'For sale' : '$500,000'}]},createElement(){return {style:{},setAttribute(){},contains(){return false},remove(){},set textContent(value){toastText=value},get textContent(){return toastText}}}};
+  const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:script}] : [{innerText:sel.includes('chip') ? 'For sale' : '$500,000'}]},createElement(){return {style:{},setAttribute(){},attachShadow(){return element('shadow')},contains(){return false},remove(){},set textContent(value){toastText=value},get textContent(){return toastText}}}};
   const context={location,document,ZillowCaptureRequests:captureRequests,ZillowExtract:{...extract,collect(document,start){return extract.extract(start, [...document.querySelectorAll('script')].map(x=>x.textContent), {status:document.querySelectorAll('chip').map(x=>x.innerText),price:document.querySelectorAll('price').map(x=>x.innerText)})}},getComputedStyle:()=>({}),crypto:{randomUUID:()=>`${String(++next).padStart(8,'0')}-1111-4111-8111-111111111111`},Date:{now:()=>now},MutationObserver:class {constructor(f){mutation=f} observe(){}},setTimeout:(f,delay)=>{timer={f,delay};return 1},clearTimeout:()=>{timer=null},setInterval:f=>{interval=f},chrome:{runtime:{sendMessage:message=>new Promise(resolve=>messages.push({message,resolve}))}}};
   vm.runInNewContext(fs.readFileSync('content.js','utf8'),context);
   return {location,messages,run(){const t=timer; timer=null; if(t){now+=t.delay; t.f()}}, interval:()=>interval(),mutation:()=>mutation([]),get appended(){return appended},get toastText(){return toastText},beforeExtract:f=>beforeExtract=f};
@@ -231,9 +231,9 @@ test('intake worker checks top frame and current tab and retries immutable body'
   current=url;assert.equal((await send({type:'watchlist-intake',observation,intake})).status,'created');assert.equal(bodies.length,2);assert.equal(bodies[0],bodies[1]);
 });
 
-test('only trusted click after explicit track choice requests intake and navigation invalidates it',async()=>{
-  let timer, buttons=[], select, messages=[], observeCount=0, statusNode, now=Date.now();
-  function element(tag){const node={style:{},children:[],setAttribute(){},contains(){return false},remove(){},appendChild(c){this.children.push(c);if(c.tag==='button')buttons.push(c);if(c.tag==='select')select=c},tag,value:'',addEventListener(_name,fn){this.handler=fn},set textContent(v){this.text=v;this.children=[]},get textContent(){return this.text||''}};return node}
+test('only trusted Add click with default House requests intake and navigation invalidates it',async()=>{
+  let timer, buttons=[], messages=[], observeCount=0, statusNode, now=Date.now();
+  function element(tag){const node={style:{},children:[],setAttribute(){},attachShadow(){return element('shadow')},contains(){return false},remove(){},appendChild(c){this.children.push(c);if(c.tag==='button')buttons.push(c)},tag,value:'',addEventListener(_name,fn){this.handler=fn},set textContent(v){this.text=v;this.children=[]},get textContent(){return this.text||''}};return node}
   const location={href:url};const source='https://www.zillow.com/homes/123-Example-St-Portland-OR-97209_rb/';
   const observed={zpid:'123',url:'https://www.zillow.com/homedetails/123_zpid/',legacyUrl:source,status:'Active',price:500000,observedAt:new Date().toISOString(),fields:{}};
   const document={documentElement:{},body:{appendChild(n){statusNode=n}},createElement:element};
@@ -242,10 +242,8 @@ test('only trusted click after explicit track choice requests intake and navigat
   vm.runInNewContext(fs.readFileSync('content.js','utf8'),ctx);await timer();await flush();
   assert.equal(messages.length,1);let b=buttons.at(-1);assert.ok(b);
   await b.handler({isTrusted:false,stopPropagation(){}});assert.equal(messages.length,1);
-  await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
-  select.value='house';await select.handler({isTrusted:false});await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
-  await select.handler({isTrusted:true});location.href=url.replace('123','456');await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
-  location.href=url;await timer();await flush();b=buttons.at(-1);select.value='house';await select.handler({isTrusted:true});await b.handler({isTrusted:true,stopPropagation(){}});
+  location.href=url.replace('123','456');await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
+  location.href=url;await timer();await flush();b=buttons.at(-1);await b.handler({isTrusted:true,stopPropagation(){}});
   assert.equal(messages.length,3);assert.equal(messages[2].type,'watchlist-intake');assert.equal(messages[2].intake.track,'house');
   assert.match(statusNode.textContent,/Saving listing details/);const before=messages[1].observation.captures; await timer(); await flush(); assert.equal(messages[3].type,'observe');assert.deepEqual(messages[3].observation.captures,before);assert.match(statusNode.textContent,/Dashboard unavailable/);now+=5000;await timer();await flush();assert.deepEqual(messages[4].observation.captures,before);assert.match(statusNode.textContent,/Saved 1 detail/);
 });
