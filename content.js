@@ -114,6 +114,7 @@
     if (!observation) {
       const reasons = {
         identity:'Listing URL not recognized',
+        'listing-scope':'Range listing scope is apartment-only or unverified; whole-property capture is blocked',
         'structured-identity':'Waiting for matching listing data',
         'structured-address':'Listing address data missing or ambiguous',
         'canonical-mismatch':'Page identity has not caught up with navigation',
