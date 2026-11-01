@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Zillow Observations",
-  "version": "0.1.4",
+  "name": "Nova Nest",
+  "version": "0.2.0",
   "permissions": [
     "storage"
   ],
@@ -21,11 +21,38 @@
         "https://www.zillow.com/*"
       ],
       "js": [
+        "dom-fields.js",
+        "capture-requests.js",
         "extract.js",
         "content.js"
       ],
       "run_at": "document_idle"
     }
   ],
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyxUs0GLDHC9yWnHutT+C+lCFuZqC8ptdkz4dqbGqRIogGfV1vDmjZWn/wFdINR+ItAYN4KqKeKbKKC/xKcZfuaE+6NKmefXksY6+EjZFYPo3HENklYgoaoY4NNMrTFygbB4TDdI4NX+KVUG+WA1uNr0Xc5QSzHmmCY0pEp43LdUKnDQG1rk+jr+ssNDMIC2QdD5MSTFTPLzObCoee/jb2qzh6eX4IwOOq8Ftwmj+/wgc4sqsEryjw8LP8LQKNJfpwUarv8vWMEjIFgFTNcdja7qF8nS74MWWW5T0p/bVQAYmYMdIkAgaOrDJEao+lZrDEUuDjRQ5+bHzXEwVYLeRewIDAQAB"
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyxUs0GLDHC9yWnHutT+C+lCFuZqC8ptdkz4dqbGqRIogGfV1vDmjZWn/wFdINR+ItAYN4KqKeKbKKC/xKcZfuaE+6NKmefXksY6+EjZFYPo3HENklYgoaoY4NNMrTFygbB4TDdI4NX+KVUG+WA1uNr0Xc5QSzHmmCY0pEp43LdUKnDQG1rk+jr+ssNDMIC2QdD5MSTFTPLzObCoee/jb2qzh6eX4IwOOq8Ftwmj+/wgc4sqsEryjw8LP8LQKNJfpwUarv8vWMEjIFgFTNcdja7qF8nS74MWWW5T0p/bVQAYmYMdIkAgaOrDJEao+lZrDEUuDjRQ5+bHzXEwVYLeRewIDAQAB",
+  "icons": {
+    "16": "icons/nova-16.png",
+    "32": "icons/nova-32.png",
+    "48": "icons/nova-48.png",
+    "128": "icons/nova-128.png"
+  },
+  "action": {
+    "default_title": "Nova Nest",
+    "default_icon": {
+      "16": "icons/nova-16.png",
+      "32": "icons/nova-32.png",
+      "48": "icons/nova-48.png",
+      "128": "icons/nova-128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/nova-32.png"
+      ],
+      "matches": [
+        "https://www.zillow.com/*"
+      ]
+    }
+  ]
 }
