@@ -112,3 +112,26 @@ test('layout-wrapper requires canonical and nested structured address, visible h
   status.hidden=true;assert.equal(extract.collect(doc,page,style),null);status.hidden=false;
   price.hidden=true;assert.equal(extract.collect(doc,page,style),null);
 });
+
+test('fixed extraction diagnostics distinguish failed evidence gates',()=>{
+  const reasons=[];const diagnose=reason=>reasons.push(reason);const check=(expected,fn)=>{reasons.length=0;assert.equal(fn(),null);assert.equal(reasons[0],expected)};
+  const evidence={status:['For sale'],price:['$500,000']};
+  check('identity',()=>extract.extract('https://example.test/',[script],evidence,diagnose));
+  check('status-missing',()=>extract.extract(url,[script],{...evidence,status:[]},diagnose));
+  check('status-unsupported',()=>extract.extract(url,[script],{...evidence,status:['Coming soon']},diagnose));
+  check('status-contradictory',()=>extract.extract(url,[script],{...evidence,status:['For sale','Pending']},diagnose));
+  check('price-missing',()=>extract.extract(url,[script],{...evidence,price:[]},diagnose));
+  check('price-ambiguous',()=>extract.extract(url,[script],{...evidence,price:['$500,000','$400,000']},diagnose));
+  check('structured-identity',()=>extract.extract(url,[],evidence,diagnose));
+  check('structured-price-mismatch',()=>extract.extract(url,[script],{...evidence,price:['$400,000']},diagnose));
+  const node=text=>({nodeType:1,innerText:text,hidden:false,getClientRects(){return this.hidden?[]:[{}]},getAttribute:()=>null,closest:()=>null});
+  const heading=node('123 Example St'),status=node('For sale'),price=node('$500,000'),root=node('');root.id='layout-wrapper';root.contains=()=>false;root.querySelectorAll=s=>s==='h1'?[heading]:s.includes('gallery-status-pill')?[status]:[price];
+  let roots=[root],canonical=url,structured={url,offers:{price:500000,itemOffered:{address:{streetAddress:'123 Example St'}}}};
+  const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:JSON.stringify(structured)}]:roots},style=()=>({display:'block',visibility:'visible',opacity:'1'});
+  const collect=()=>extract.collect(doc,url,style,diagnose);
+  roots=[];check('no-visible-container',collect);roots=[root];canonical=url.replace('123_zpid','456_zpid');check('canonical-mismatch',collect);canonical=url;
+  structured.url=url.replace('123_zpid','456_zpid');check('structured-identity',collect);structured.url=url;
+  structured.offers.itemOffered.address={};check('structured-address',collect);structured.offers.itemOffered.address={streetAddress:'123 Example St'};
+  heading.innerText='999 Different St';check('heading-mismatch',collect);heading.innerText='123 Example St';
+  roots=[root,{...root}];check('ambiguous-container',collect);roots=[root];status.hidden=true;check('status-missing',collect);
+});
