@@ -39,10 +39,10 @@ test('manifest limits permissions to Zillow and optional HTTPS origins', () => {
 function harness(start='https://www.zillow.com/portland-or/') {
   let timer, interval, mutation, now=0, next=0, appended=0, toastText='', beforeExtract=()=>{};
   const location={href:start}, messages=[];
-  const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:script}] : [{innerText:sel.includes('chip') ? 'For sale' : '$500,000'}]},createElement(){return {style:{},remove(){}}}};
+  const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:script}] : [{innerText:sel.includes('chip') ? 'For sale' : '$500,000'}]},createElement(){return {style:{},setAttribute(){},contains(){return false},remove(){},set textContent(value){toastText=value},get textContent(){return toastText}}}};
   const context={location,document,ZillowExtract:{...extract,collect(document,start){return extract.extract(start, [...document.querySelectorAll('script')].map(x=>x.textContent), {status:document.querySelectorAll('chip').map(x=>x.innerText),price:document.querySelectorAll('price').map(x=>x.innerText)})}},getComputedStyle:()=>({}),crypto:{randomUUID:()=>`${String(++next).padStart(8,'0')}-1111-4111-8111-111111111111`},Date:{now:()=>now},MutationObserver:class {constructor(f){mutation=f} observe(){}},setTimeout:(f,delay)=>{timer={f,delay};return 1},clearTimeout:()=>{timer=null},setInterval:f=>{interval=f},chrome:{runtime:{sendMessage:message=>new Promise(resolve=>messages.push({message,resolve}))}}};
   vm.runInNewContext(fs.readFileSync('content.js','utf8'),context);
-  return {location,messages,run(){const t=timer; timer=null; if(t){now+=t.delay; t.f()}}, interval:()=>interval(),mutation:()=>mutation(),get appended(){return appended},get toastText(){return toastText},beforeExtract:f=>beforeExtract=f};
+  return {location,messages,run(){const t=timer; timer=null; if(t){now+=t.delay; t.f()}}, interval:()=>interval(),mutation:()=>mutation([]),get appended(){return appended},get toastText(){return toastText},beforeExtract:f=>beforeExtract=f};
 }
 test('search-to-property SPA captures, toast only on changed acknowledgement, and deduplicates', async()=>{
   const h=harness();h.run();assert.equal(h.messages.length,0);h.location.href=url;h.interval();h.run();assert.equal(h.messages.length,1);
@@ -50,12 +50,12 @@ test('search-to-property SPA captures, toast only on changed acknowledgement, an
 });
 test('failed retry preserves exact capture without mutations and malformed acknowledgement cannot toast',async()=>{
   const h=harness(url);h.run();const first=h.messages[0].message.observation;h.messages[0].resolve({ok:false});await flush();h.run();assert.deepEqual(h.messages[1].message.observation,first);
-  h.messages[1].resolve({ok:true,changedFields:['unknown']});await flush();assert.equal(h.appended,0);h.run();assert.deepEqual(h.messages[2].message.observation,first);
-  h.messages[2].resolve({ok:true,changedFields:[]});await flush();assert.equal(h.appended,0);h.mutation();h.run();assert.equal(h.messages.length,3);
+  h.messages[1].resolve({ok:true,changedFields:['unknown']});await flush();assert.match(h.toastText,/Could not save/);h.run();assert.deepEqual(h.messages[2].message.observation,first);
+  h.messages[2].resolve({ok:true,changedFields:[]});await flush();assert.match(h.toastText,/up to date/);h.mutation();h.run();assert.equal(h.messages.length,3);
 });
 test('SPA changes during extraction and after response do not send or toast old property',async()=>{
   const a=harness(url);a.beforeExtract(()=>{a.location.href=url.replace('123','456')});a.run();assert.equal(a.messages.length,0);
-  const b=harness(url);b.run();b.location.href=url.replace('123','456');b.messages[0].resolve({ok:true,changedFields:['price']});await flush();assert.equal(b.appended,0);
+  const b=harness(url);b.run();b.location.href=url.replace('123','456');b.messages[0].resolve({ok:true,changedFields:['price']});await flush();assert.doesNotMatch(b.toastText,/Captured/);
 });
 
 test('toast names each confirmed field', async()=>{ const h=harness(url); h.run(); h.messages[0].resolve({ok:true,changedFields:['price','status']}); await flush(); assert.match(h.toastText,/price/); assert.match(h.toastText,/status/); });
@@ -83,3 +83,32 @@ test('toast names each confirmed field', async()=>{ const h=harness(url); h.run(
   let canonical=url;const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:ld}]:[root]};const style=()=>({display:'block',visibility:'visible',opacity:'1'});
   assert.equal(extract.collect(doc,url,style).price,500000);heading.innerText='456 Other St';assert.equal(extract.collect(doc,url,style),null);heading.innerText='123 Example St';canonical=url.replace('123_zpid','456_zpid');assert.equal(extract.collect(doc,url,style),null);
  });
+
+test('worker returns safe actionable categories without server text', async()=>{
+  let listener, mode='settings';
+  const chrome={runtime:{id:'extension',onMessage:{addListener:f=>listener=f}},storage:{local:{setAccessLevel:async()=>{},get:async()=>({origin:mode==='settings'?'bad':'https://dashboard.test',token:'private-token'})}},tabs:{get:async()=>({url})},permissions:{contains:async()=>true}};
+  const context={chrome,URL,AbortSignal,importScripts:()=>{},ZillowExtract:extract,fetch:async()=>{if(mode==='network') throw Error('secret'); if(mode==='authorization') return {ok:false,status:401};return {ok:true,json:async()=>({matched:false,changedFields:[],message:'secret'})}}};
+  vm.runInNewContext(fs.readFileSync('worker.js','utf8'),context);
+  const sender={id:'extension',frameId:0,tab:{id:1,url},url};
+  const send=()=>new Promise(resolve=>listener({type:'observe',observation:{zpid:'123',url:'https://www.zillow.com/homedetails/123_zpid/'}},sender,resolve));
+  for(const category of ['settings','authorization','network','not-tracked']) {mode=category;const result=await send();assert.equal(result.reason,category);assert.doesNotMatch(JSON.stringify(result),/secret|private-token/)}
+});
+test('unreadable listing and repeated mutations produce visible status and cannot starve capture',async()=>{
+  const h=harness(url); assert.match(h.toastText,/Zillow listing detected/); for(let i=0;i<100;i++) h.mutation(); h.run(); assert.equal(h.messages.length,1); assert.match(h.toastText,/Checking price and status/);
+  h.messages[0].resolve({ok:false,reason:'not-tracked'});await flush();assert.match(h.toastText,/not tracked/);
+  const unreadable=harness(url.replace('123','456'));unreadable.run();assert.match(unreadable.toastText,/could not be read/);assert.equal(unreadable.messages.length,0);
+});
+
+test('layout-wrapper requires canonical and nested structured address, visible heading and gallery status',()=>{
+  const page='https://www.zillow.com/homedetails/example/123_zpid/';
+  const ld={url:page,offers:{price:500000,itemOffered:{address:{streetAddress:'123 Example St'}}}};
+  const node=text=>({nodeType:1,innerText:text,hidden:false,getClientRects(){return this.hidden?[]:[{}]},getAttribute:()=>null,closest:()=>null});
+  const heading=node('123 Example St, Portland OR'),status=node('Pending'),price=node('$500,000');
+  const root=node('');root.id='layout-wrapper';root.contains=()=>false;root.querySelectorAll=s=>s==='h1'?[heading]:s.includes('gallery-status-pill')?[status]:[price];
+  let canonical=page;const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:JSON.stringify(ld)}]:[root]};const style=()=>({display:'block',visibility:'visible',opacity:'1'});
+  let result=extract.collect(doc,page,style);assert.equal(result.zpid,'123');assert.equal(result.status,'Pending');assert.equal(result.price,500000);
+  canonical=page.replace('123_zpid','456_zpid');assert.equal(extract.collect(doc,page,style),null);canonical=page;
+  heading.innerText='456 Different St';assert.equal(extract.collect(doc,page,style),null);heading.innerText='123 Example St';
+  status.hidden=true;assert.equal(extract.collect(doc,page,style),null);status.hidden=false;
+  price.hidden=true;assert.equal(extract.collect(doc,page,style),null);
+});
