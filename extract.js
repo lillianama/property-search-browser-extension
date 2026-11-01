@@ -2,8 +2,12 @@
   function identity(url) {
     try { const u = new URL(url); const m = u.pathname.match(/^\/homedetails\/(?:[^/]*\/)?([1-9]\d{0,19})_zpid\/?$/); return u.origin === 'https://www.zillow.com' && !u.username && !u.password && m ? m[1] : null; } catch { return null; }
   }
+  const houseNumber = value => /^\s*([1-9]\d*)(?:\s*-\s*([1-9]\d*))?(?=\s|,|$)/.exec(String(value || ''))?.slice(1).join('-') || null;
   function legacyUrl(address) {
-    if (!address || !/^[0-9][A-Za-z0-9, ]{4,119}$/.test(address.streetAddress || '')
+    const street = address?.streetAddress || '';
+    const range = /^([1-9]\d{0,6})-([1-9]\d{0,6}) (?=[A-Za-z])/.exec(street);
+    if (range && Number(range[1]) >= Number(range[2])) return null;
+    if (!address || !/^[0-9][A-Za-z0-9, ]{4,119}$/.test(range ? street.replace(/^\d+-\d+ /, x=>x.replace('-', ' ')) : street)
       || !/^[A-Za-z][A-Za-z ]{1,59}$/.test(address.addressLocality || '')
       || !/^[A-Z]{2}$/.test(address.addressRegion || '') || !/^\d{5}$/.test(address.postalCode || '')) return null;
     const slug = [address.streetAddress,address.addressLocality,address.addressRegion,address.postalCode].map(x=>x.trim().replace(/[, ]+/g,'-')).join('-');
@@ -19,11 +23,11 @@
       cache = JSON.parse(next.props.pageProps.componentProps.gdpClientCache);
     } catch { return null; }
     if (!cache || typeof cache !== 'object' || Array.isArray(cache)) return null;
-    const norm = value => typeof value === 'string' ? value.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const norm = value => typeof value === 'string' ? value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() : '';
     const street = address?.streetAddress;
     const matches = Object.values(cache).map(x => x && typeof x === 'object' ? x.property : null).filter(p => {
       const a = p?.address || {};
-      return p && String(p.zpid) === zpid && norm(a.streetAddress || p.streetAddress) === norm(street) && norm(street).length >= 6
+      return p && String(p.zpid) === zpid && houseNumber(a.streetAddress || p.streetAddress) === houseNumber(street) && norm(a.streetAddress || p.streetAddress) === norm(street) && norm(street).length >= 6
         && (!address.addressLocality || norm(address.addressLocality) === norm(a.city || p.city))
         && (!address.addressRegion || norm(address.addressRegion) === norm(a.state || p.state))
         && (!address.postalCode || norm(address.postalCode) === norm(a.zipcode || p.zipcode));
@@ -139,7 +143,7 @@
       }
       return result;
     };
-    const headingMatches = (heading, street) => { const tokens=s=>String(s || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); const a=tokens(street), b=tokens(heading), u=units(street), v=units(heading); return !!a && u!==null && v!==null && u.length<=1 && v.length<=1 && JSON.stringify(u)===JSON.stringify(v) && (` ${b} `).includes(` ${a} `); };
+    const headingMatches = (heading, street) => { const tokens=s=>String(s || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); const a=tokens(street), b=tokens(heading), u=units(street), v=units(heading); return !!a && houseNumber(heading) === houseNumber(street) && u!==null && v!==null && u.length<=1 && v.length<=1 && JSON.stringify(u)===JSON.stringify(v) && (` ${b} `).includes(` ${a} `); };
     const addresses = [], addressObjects = []; let structuredIdentity = false;
     for (const script of scripts) {
       let data; try { data = JSON.parse(script); } catch { continue; }
@@ -197,6 +201,10 @@
       const fields = projectCache(next.textContent, zpid, addressObjects[0]);
       if (fields) observation.fields = fields;
     }
+    // A range can label one rental apartment as well as the entire plex. Only
+    // identity-bound whole-property data can authorize captures for a range.
+    if (/^\d+\s*-\s*\d+\b/.test(street || '')
+      && !/^multi_?family$/i.test(observation.fields?.property_type || '')) return fail('listing-scope');
     if (root.ZillowDomFields) {
       const scopedVisible = node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid);
       const dom = root.ZillowDomFields.collect(roots[0],scopedVisible);
