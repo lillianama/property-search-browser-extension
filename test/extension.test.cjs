@@ -103,12 +103,12 @@ test('manifest limits permissions to Zillow and optional HTTPS origins', () => {
   const m=JSON.parse(fs.readFileSync('manifest.json')); assert.deepEqual(m.permissions,['storage']); assert.deepEqual(m.host_permissions,['https://www.zillow.com/*']); assert.deepEqual(m.optional_host_permissions,['https://*/*']); assert.deepEqual(m.content_scripts[0].matches,['https://www.zillow.com/*']);
 });
 function harness(start='https://www.zillow.com/portland-or/') {
-  let timer, interval, mutation, now=0, next=0, appended=0, toastText='', beforeExtract=()=>{};
+  let timer, interval, mutation, now=0, next=0, appended=0, toastText='', beforeExtract=()=>{}, listingPrice=500000, listingStatus='For sale', structuredUrl=url;
   const location={href:start}, messages=[];
-  const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:script}] : [{innerText:sel.includes('chip') ? 'For sale' : '$500,000'}]},createElement(){return {style:{},setAttribute(){},attachShadow(){return element('shadow')},contains(){return false},remove(){},set textContent(value){toastText=value},get textContent(){return toastText}}}};
+  const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:JSON.stringify({url:structuredUrl,offers:{price:listingPrice}})}] : [{innerText:sel.includes('chip') ? listingStatus : '$'+listingPrice.toLocaleString('en-US')}]},createElement(){return {style:{},setAttribute(){},attachShadow(){return element('shadow')},contains(){return false},remove(){},set textContent(value){toastText=value},get textContent(){return toastText}}}};
   const context={location,document,ZillowCaptureRequests:captureRequests,ZillowExtract:{...extract,collect(document,start){return extract.extract(start, [...document.querySelectorAll('script')].map(x=>x.textContent), {status:document.querySelectorAll('chip').map(x=>x.innerText),price:document.querySelectorAll('price').map(x=>x.innerText)})}},getComputedStyle:()=>({}),crypto:{randomUUID:()=>`${String(++next).padStart(8,'0')}-1111-4111-8111-111111111111`},Date:{now:()=>now},MutationObserver:class {constructor(f){mutation=f} observe(){}},setTimeout:(f,delay)=>{timer={f,delay};return 1},clearTimeout:()=>{timer=null},setInterval:f=>{interval=f},chrome:{runtime:{sendMessage:message=>new Promise(resolve=>messages.push({message,resolve}))}}};
   vm.runInNewContext(fs.readFileSync('content.js','utf8'),context);
-  return {location,messages,run(){const t=timer; timer=null; if(t){now+=t.delay; t.f()}}, interval:()=>interval(),mutation:()=>mutation([]),get appended(){return appended},get toastText(){return toastText},beforeExtract:f=>beforeExtract=f};
+  return {location,messages,run(){const t=timer; timer=null; if(t){now+=t.delay; t.f()}}, interval:()=>interval(),mutation:()=>mutation([]),get appended(){return appended},get toastText(){return toastText},beforeExtract:f=>beforeExtract=f,listing:(price,status)=>{listingPrice=price;listingStatus=status},structured:value=>{structuredUrl=value}};
 }
 test('search-to-property SPA captures, toast only on changed acknowledgement, and deduplicates', async()=>{
   const h=harness();h.run();assert.equal(h.messages.length,0);h.location.href=url;h.interval();h.run();assert.equal(h.messages.length,1);
@@ -232,12 +232,12 @@ test('intake worker checks top frame and current tab and retries immutable body'
 });
 
 test('only trusted Add click with default House requests intake and navigation invalidates it',async()=>{
-  let timer, buttons=[], messages=[], observeCount=0, statusNode, now=Date.now();
+  let timer, buttons=[], messages=[], observeCount=0, intakeCount=0, statusNode, now=Date.now();
   function element(tag){const node={style:{},children:[],setAttribute(){},attachShadow(){return element('shadow')},contains(){return false},remove(){},appendChild(c){this.children.push(c);if(c.tag==='button')buttons.push(c)},tag,value:'',addEventListener(_name,fn){this.handler=fn},set textContent(v){this.text=v;this.children=[]},get textContent(){return this.text||''}};return node}
   const location={href:url};const source='https://www.zillow.com/homes/123-Example-St-Portland-OR-97209_rb/';
   const observed={zpid:'123',url:'https://www.zillow.com/homedetails/123_zpid/',legacyUrl:source,status:'Active',price:500000,observedAt:new Date().toISOString(),fields:{}};
   const document={documentElement:{},body:{appendChild(n){statusNode=n}},createElement:element};
-  const chrome={runtime:{sendMessage:async m=>{messages.push(m);if(m.type!=='observe')return {ok:true,status:'created'};observeCount++;return observeCount<=2?{ok:false,reason:'not-tracked'}:observeCount===3?{ok:false,reason:'network'}:{ok:true,changedFields:['bedrooms']}}}};
+  const chrome={runtime:{sendMessage:async m=>{messages.push(m);if(m.type!=='observe')return ++intakeCount===1?{ok:false,reason:'network'}:{ok:true,status:'created'};observeCount++;return observeCount<=2?{ok:false,reason:'not-tracked'}:observeCount===3?{ok:false,reason:'network'}:{ok:true,changedFields:['bedrooms']}}}};
   const ctx={location,document,chrome,ZillowCaptureRequests:captureRequests,ZillowExtract:{...extract,collect:()=>observed},getComputedStyle:()=>({}),crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'},Date:class extends Date {static now(){return now}},MutationObserver:class{observe(){}},setTimeout:f=>{timer=f;return 1},clearTimeout(){},setInterval(){}};
   vm.runInNewContext(fs.readFileSync('content.js','utf8'),ctx);await timer();await flush();
   assert.equal(messages.length,1);let b=buttons.at(-1);assert.ok(b);
@@ -245,7 +245,10 @@ test('only trusted Add click with default House requests intake and navigation i
   location.href=url.replace('123','456');await b.handler({isTrusted:true,stopPropagation(){}});assert.equal(messages.length,1);
   location.href=url;await timer();await flush();b=buttons.at(-1);await b.handler({isTrusted:true,stopPropagation(){}});
   assert.equal(messages.length,3);assert.equal(messages[2].type,'watchlist-intake');assert.equal(messages[2].intake.track,'house');
-  assert.match(statusNode.textContent,/Saving listing details/);const before=messages[1].observation.captures; await timer(); await flush(); assert.equal(messages[3].type,'observe');assert.deepEqual(messages[3].observation.captures,before);assert.match(statusNode.textContent,/Dashboard unavailable/);now+=5000;await timer();await flush();assert.deepEqual(messages[4].observation.captures,before);assert.match(statusNode.textContent,/Saved 1 detail/);
+  assert.equal(buttons.at(-1).textContent,'Retry Add to Watchlist');
+  location.href=url+'?mmlb=g,2#photos';await b.handler({isTrusted:true,stopPropagation(){}});
+  assert.deepEqual(messages[3].intake,messages[2].intake);
+  assert.match(statusNode.textContent,/Saving listing details/);const before=messages[1].observation.captures; await timer(); await flush(); assert.equal(messages[4].type,'observe');assert.deepEqual(messages[4].observation.captures,before);assert.match(statusNode.textContent,/Dashboard unavailable/);now+=5000;await timer();await flush();assert.deepEqual(messages[5].observation.captures,before);assert.match(statusNode.textContent,/Saved 1 detail/);
 });
 
 test('structured and visible address unit evidence must agree in both directions',()=>{
@@ -258,4 +261,41 @@ test('structured and visible address unit evidence must agree in both directions
     for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A','J25, A']) assert.equal(styleFor(`920 NW Naito Pkwy, Apt ${unit}`,'920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit),null);
     assert.equal(styleFor('920 NW Naito Pkwy, Apt J25','920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit).zpid,'62966567');
   }
+});
+
+
+test('photo URL variants retain saved state; real listing changes still capture',async()=>{
+  const h=harness(url);h.run();h.messages[0].resolve({ok:true,changedFields:[]});await flush();
+  const status=h.toastText;
+  for(const variant of [url+'?mmlb=g,1',url+'?mmlb=g,2#photos',url+'#photo-1',url.replace('/example/','/renamed-slug/')]) {
+    h.location.href=variant;h.interval();h.mutation();h.run();
+    assert.equal(h.messages.length,1);assert.equal(h.toastText,status);assert.equal(h.appended,1);
+  }
+  h.listing(490000,'Pending');h.mutation();h.run();assert.equal(h.messages.length,2);
+  assert.equal(h.messages[1].message.observation.price,490000);assert.equal(h.messages[1].message.observation.status,'Pending');
+});
+test('photo navigation preserves in-flight acknowledgement and immutable retry',async()=>{
+  const h=harness(url);h.run();const first=h.messages[0].message;
+  h.location.href=url+'?mmlb=g,2';h.interval();h.mutation();h.run();assert.equal(h.messages.length,1);
+  h.messages[0].resolve({ok:false,reason:'network'});await flush();
+  h.location.href=url+'#photos';h.interval();h.run();assert.equal(h.messages.length,2);assert.deepEqual(h.messages[1].message,first);
+  h.location.href=url+'?mmlb=g,1';h.messages[1].resolve({ok:true,changedFields:['price']});await flush();
+  assert.match(h.toastText,/Saved 1 detail/);h.mutation();h.run();assert.equal(h.messages.length,2);
+});
+test('new ZPID resets state and stale acknowledgement cannot replace new property status',async()=>{
+  const h=harness(url);h.run();h.location.href=url.replace('123','456');h.structured(h.location.href);h.interval();h.run();
+  assert.equal(h.messages.length,2);assert.equal(h.messages[1].message.observation.zpid,'456');const nextStatus=h.toastText;
+  h.messages[0].resolve({ok:true,changedFields:['price']});await flush();assert.equal(h.toastText,nextStatus);
+  h.messages[1].resolve({ok:true,changedFields:[]});await flush();
+  h.location.href=url;h.structured(url);h.interval();h.run();assert.equal(h.messages.length,3);
+  h.messages[2].resolve({ok:true,changedFields:[]});await flush();assert.match(h.toastText,/Checked/);
+});
+test('photo ordering is not semantic; new photos and listing facts are',()=>{
+  const o={zpid:'123',price:500000,status:'Active',fields:{photos:['https://photos.zillowstatic.com/a.jpg','https://photos.zillowstatic.com/b.jpg']}};
+  const reordered={...o,url:url+'?photo=2',fields:{photos:[...o.fields.photos].reverse().concat(o.fields.photos[0])}};
+  assert.equal(captureRequests.fingerprint(o),captureRequests.fingerprint(reordered));
+  assert.notEqual(captureRequests.fingerprint(o),captureRequests.fingerprint({...o,fields:{photos:[...o.fields.photos,'https://photos.zillowstatic.com/c.jpg']}}));
+  assert.notEqual(captureRequests.fingerprint(o),captureRequests.fingerprint({...o,price:490000}));
+  assert.notEqual(captureRequests.fingerprint(o),captureRequests.fingerprint({...o,status:'Pending'}));
+  assert.equal(o.fields.photos.length,2);
 });
