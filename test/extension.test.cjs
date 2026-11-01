@@ -256,8 +256,8 @@ test('structured and visible address unit evidence must agree in both directions
   for(const explicit of [false,true]){
     assert.equal(styleFor('920 NW Naito Pkwy','920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit),null);
     assert.equal(styleFor('920 NW Naito Pkwy, Apt J25','920 NW Naito Pkwy, Portland, OR 97209',explicit),null);
-    for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A'])assert.equal(styleFor('920 NW Naito Pkwy, Apt J25',`920 NW Naito Pkwy, Apt ${unit}, Portland, OR 97209`,explicit),null);
-    for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A']) assert.equal(styleFor(`920 NW Naito Pkwy, Apt ${unit}`,'920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit),null);
+    for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A','J25, A'])assert.equal(styleFor('920 NW Naito Pkwy, Apt J25',`920 NW Naito Pkwy, Apt ${unit}, Portland, OR 97209`,explicit),null);
+    for(const unit of ['J2','J250','25','J25-A','J25/2','J25.A','J25 - A','J25 / 2','J25 . A','J25, A']) assert.equal(styleFor(`920 NW Naito Pkwy, Apt ${unit}`,'920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit),null);
     assert.equal(styleFor('920 NW Naito Pkwy, Apt J25','920 NW Naito Pkwy, Apt J25, Portland, OR 97209',explicit).zpid,'62966567');
   }
 });
