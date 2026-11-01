@@ -3,6 +3,7 @@
   "name": "Zillow Observations",
   "version": "0.1.0",
   "permissions": ["storage"],
+  "host_permissions": ["https://www.zillow.com/*"],
   "optional_host_permissions": ["https://*/*"],
   "background": {"service_worker": "worker.js"},
   "options_page": "options.html",

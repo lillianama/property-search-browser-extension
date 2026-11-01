@@ -36,7 +36,7 @@
     if (result?.ok === true && Array.isArray(result.changedFields) && result.changedFields.every(x => x === 'price' || x === 'status')) {
       saved = key; pending = null;
       if (result.changedFields.length) {
-        const toast = document.createElement('div'); toast.textContent = 'Listing observation saved';
+        const toast = document.createElement('div'); toast.textContent = `Listing saved: ${[...new Set(result.changedFields)].join(', ')}`;
         Object.assign(toast.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:'2147483647',background:'#173d2b',color:'white',padding:'12px',borderRadius:'6px'});
         document.body.appendChild(toast); setTimeout(() => toast.remove(),4000);
       }
