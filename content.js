@@ -27,8 +27,10 @@
       schedule();
     }
   }
+  let readFailure = '';
   function extract(start) {
-    return ZillowExtract.collect(document, start, getComputedStyle);
+    readFailure = '';
+    return ZillowExtract.collect(document, start, getComputedStyle, reason => { readFailure = reason; });
   }
   async function capture() {
     routeChanged();
@@ -36,7 +38,25 @@
     if (!id) return;
     const observation = extract(start);
     if (location.href !== start || turn !== generation) return;
-    if (!observation) { showStatus('Listing details could not be read.', 'warning'); return; }
+    if (!observation) {
+      const reasons = {
+        identity:'Listing URL not recognized',
+        'structured-identity':'Waiting for matching listing data',
+        'structured-address':'Listing address data missing or ambiguous',
+        'canonical-mismatch':'Page identity has not caught up with navigation',
+        'no-visible-container':'Listing details container not visible',
+        'ambiguous-container':'Multiple listing containers found',
+        'heading-mismatch':'Visible address does not match listing data',
+        'status-missing':'Listing status not visible',
+        'status-unsupported':'Listing status not supported',
+        'status-contradictory':'Conflicting listing statuses found',
+        'price-missing':'Asking price not visible',
+        'price-ambiguous':'Multiple asking prices found',
+        'structured-price-mismatch':'Visible price does not match listing data'
+      };
+      showStatus(`Listing details could not be read: ${reasons[readFailure] || 'unknown reading error'} (v0.1.3).`, 'warning');
+      return;
+    }
     const key = fingerprint(observation);
     if (key === saved) return;
     if (!pending || pending.key !== key) pending = {key, observation: {...observation, captureId: crypto.randomUUID()}, attempts: 0, inFlight: false};
