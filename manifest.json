@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Zillow Observations",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "permissions": [
     "storage"
   ],

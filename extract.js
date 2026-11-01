@@ -10,7 +10,7 @@
     let status;
     if (evidence.status.some(text => /\b(?:for\s+rent|sold|off[\s-]+market)\b/i.test(text))) return fail('status-contradictory');
     const pending = evidence.status.some(text => /^(?:pending|contingent)$/i.test(text.trim()));
-    const active = evidence.status.some(text => /^for sale$/i.test(text.trim()));
+    const active = evidence.status.some(text => /^(?:for sale|active)$/i.test(text.trim()));
     if (pending && active) return fail('status-contradictory');
     if (pending) status = 'Pending';
     else if (active) status = 'Active';
