@@ -1,6 +1,6 @@
 (function(root) {
   function identity(url) {
-    try { const u = new URL(url); const m = u.pathname.match(/^\/homedetails\/(?:[^/]*\/)?([1-9]\d{0,19})_zpid\/?$/); return u.protocol === 'https:' && u.hostname === 'www.zillow.com' && m ? m[1] : null; } catch { return null; }
+    try { const u = new URL(url); const m = u.pathname.match(/^\/homedetails\/(?:[^/]*\/)?([1-9]\d{0,19})_zpid\/?$/); return u.origin === 'https://www.zillow.com' && !u.username && !u.password && m ? m[1] : null; } catch { return null; }
   }
   function extract(url, scripts, evidence) {
     const zpid = identity(url); if (!zpid || !evidence || !Array.isArray(evidence.status) || !Array.isArray(evidence.price)) return null;

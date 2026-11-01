@@ -6,5 +6,5 @@
   "optional_host_permissions": ["https://*/*"],
   "background": {"service_worker": "worker.js"},
   "options_page": "options.html",
-  "content_scripts": [{"matches": ["https://www.zillow.com/homedetails/*"], "js": ["extract.js", "content.js"], "run_at": "document_idle"}]
+  "content_scripts": [{"matches": ["https://www.zillow.com/*"], "js": ["extract.js", "content.js"], "run_at": "document_idle"}]
 }

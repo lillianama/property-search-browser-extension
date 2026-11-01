@@ -1,26 +1,52 @@
 (() => {
-  let sequence = 0, last = '', timer;
-  async function capture() {
-    const start = location.href, id = ZillowExtract.identity(start), turn = ++sequence;
-    if (!id) return;
+  let generation = 0, timer, route = location.href, pending = null, saved = '';
+  const fingerprint = o => JSON.stringify([o.zpid, o.price, o.status]);
+  function schedule(delay = 800) {
+    clearTimeout(timer);
+    timer = setTimeout(capture, delay);
+  }
+  function routeChanged() {
+    if (route !== location.href) {
+      route = location.href; generation++; pending = null; saved = ''; schedule();
+    }
+  }
+  function extract(start) {
     const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')].map(x => x.textContent);
-    const observation = ZillowExtract.extract(start, scripts, {status:[...document.querySelectorAll('[data-testid="home-details-chip"]')].map(x => x.innerText || ''), price:[...document.querySelectorAll('[data-testid="price"]')].map(x => x.innerText || '')});
-    if (!observation || location.href !== start || ZillowExtract.identity(location.href) !== id || turn !== sequence) return;
-    const fingerprint = JSON.stringify([observation.zpid, observation.price ?? null, observation.status ?? null]);
-    if (fingerprint === last) return;
-    try {
-      const result = await chrome.runtime.sendMessage({type:'observe',observation});
-      if (location.href !== start || ZillowExtract.identity(location.href) !== id || turn !== sequence) return;
-      if (result?.ok) last = fingerprint;
-      if (result?.ok && Array.isArray(result.changedFields) && result.changedFields.length) {
+    return ZillowExtract.extract(start, scripts, {status:[...document.querySelectorAll('[data-testid="home-details-chip"]')].map(x => x.innerText || ''), price:[...document.querySelectorAll('[data-testid="price"]')].map(x => x.innerText || '')});
+  }
+  async function capture() {
+    routeChanged();
+    const start = location.href, id = ZillowExtract.identity(start), turn = generation;
+    if (!id) return;
+    const observation = extract(start);
+    if (!observation || location.href !== start || turn !== generation) return;
+    const key = fingerprint(observation);
+    if (key === saved) return;
+    if (!pending || pending.key !== key) pending = {key, observation: {...observation, captureId: crypto.randomUUID()}, attempts: 0, inFlight: false};
+    const current = pending;
+    if (current.inFlight) return;
+    if (current.retryAt && current.retryAt > Date.now()) { schedule(current.retryAt - Date.now()); return; }
+    current.inFlight = true;
+    let result;
+    try { result = await chrome.runtime.sendMessage({type:'observe', observation:current.observation}); } catch { /* retry below */ }
+    current.inFlight = false;
+    if (location.href !== start || turn !== generation || pending !== current) return;
+    const displayed = extract(start);
+    if (location.href !== start || !displayed || fingerprint(displayed) !== key) { pending = null; schedule(); return; }
+    if (result?.ok === true && Array.isArray(result.changedFields) && result.changedFields.every(x => x === 'price' || x === 'status')) {
+      saved = key; pending = null;
+      if (result.changedFields.length) {
         const toast = document.createElement('div'); toast.textContent = 'Listing observation saved';
         Object.assign(toast.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:'2147483647',background:'#173d2b',color:'white',padding:'12px',borderRadius:'6px'});
         document.body.appendChild(toast); setTimeout(() => toast.remove(),4000);
       }
-    } catch { /* next mutation retries */ }
+    } else {
+      current.attempts++;
+      const delay = Math.min(60000, 1000 * 2 ** Math.min(current.attempts, 6));
+      current.retryAt = Date.now() + delay; schedule(delay);
+    }
   }
-  function schedule() { ++sequence; clearTimeout(timer); timer = setTimeout(capture,800); }
-  new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true,characterData:true});
-  setInterval(() => { if (location.href !== lastUrl) { lastUrl = location.href; schedule(); } },500);
-  let lastUrl = location.href; schedule();
+  new MutationObserver(() => { routeChanged(); schedule(); }).observe(document.documentElement,{childList:true,subtree:true,characterData:true});
+  setInterval(routeChanged,500);
+  schedule();
 })();
