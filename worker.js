@@ -5,12 +5,19 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
   (async () => {
     if (message?.type !== 'observe' || sender.id !== chrome.runtime.id || sender.frameId !== 0 || !sender.tab?.id || !sender.url || !sender.tab.url) return {ok:false};
     const o = message.observation, id = ZillowExtract.identity(sender.url);
-    if (!o || !id || ZillowExtract.identity(sender.tab.url) !== id || o.zpid !== id || o.url !== `https://www.zillow.com/homedetails/${id}_zpid/` || Object.keys(o).some(k => !['zpid','url','observedAt','status','price','captureId','fields','captures'].includes(k))) return {ok:false};
+    if (!o || !id || ZillowExtract.identity(sender.tab.url) !== id || o.zpid !== id || o.url !== `https://www.zillow.com/homedetails/${id}_zpid/` || Object.keys(o).some(k => !['zpid','url','observedAt','status','price','captureId','fields','captures','legacyUrl'].includes(k))) return {ok:false};
     const captures = Array.isArray(o.captures) ? o.captures : [o];
     if (!captures.length || captures.length > 500) return {ok:false,reason:'oversized'};
     if (o.captures && captures.some((c,i) => !c || c.zpid !== id || c.url !== o.url || c.observedAt !== o.observedAt || Object.keys(c).some(k => !['zpid','url','observedAt','captureId','field','value','identity'].includes(k)) || (i === 0 ? c.field !== 'listing' : !fieldNames.has(c.field) || c.field === 'price' || c.field === 'status'))) return {ok:false};
     // Evidence must agree with the identity-bound collector fields, never page-supplied routing.
-    if (captures.some(c => c.identity && (Object.keys(c.identity).length !== 2 || c.identity.parcelId !== o.fields?.parcel_id || c.identity.mlsNumber !== o.fields?.mls_number || ![c.identity.parcelId,c.identity.mlsNumber].every(v => typeof v === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(v))))) return {ok:false};
+    if (captures.some(c => {
+      const e=c.identity; if (!e) return false;
+      if (!e || typeof e !== 'object' || Array.isArray(e) || Object.keys(e).some(k=>!['legacyUrl','parcelId','mlsNumber'].includes(k))) return true;
+      if (e.legacyUrl !== undefined && (e.legacyUrl !== o.legacyUrl || !/^https:\/\/www\.zillow\.com\/homes\/[0-9][A-Za-z0-9-]{4,200}-[A-Z]{2}-[0-9]{5}_rb\/$/.test(e.legacyUrl))) return true;
+      if (e.legacyUrl === undefined && Object.keys(e).length !== 2) return true;
+      return ['parcelId','mlsNumber'].some(k => e[k] !== undefined && (e[k] !== o.fields?.[k==='parcelId'?'parcel_id':'mls_number'] || typeof e[k] !== 'string' || !/^[A-Za-z0-9-]{1,40}$/.test(e[k])))
+        || (e.legacyUrl === undefined && (!e.parcelId || !e.mlsNumber));
+    })) return {ok:false};
     const bodies = captures.map(c => JSON.stringify(c));
     if (bodies.some(body => new TextEncoder().encode(body).length > 256000)) return {ok:false,reason:'oversized'};
     const tab = await chrome.tabs.get(sender.tab.id); if (ZillowExtract.identity(tab.url) !== id) return {ok:false};

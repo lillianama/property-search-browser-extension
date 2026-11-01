@@ -2,6 +2,13 @@
   function identity(url) {
     try { const u = new URL(url); const m = u.pathname.match(/^\/homedetails\/(?:[^/]*\/)?([1-9]\d{0,19})_zpid\/?$/); return u.origin === 'https://www.zillow.com' && !u.username && !u.password && m ? m[1] : null; } catch { return null; }
   }
+  function legacyUrl(address) {
+    if (!address || !/^[0-9][A-Za-z0-9 ]{4,119}$/.test(address.streetAddress || '')
+      || !/^[A-Za-z][A-Za-z ]{1,59}$/.test(address.addressLocality || '')
+      || !/^[A-Z]{2}$/.test(address.addressRegion || '') || !/^\d{5}$/.test(address.postalCode || '')) return null;
+    const slug = [address.streetAddress,address.addressLocality,address.addressRegion,address.postalCode].map(x=>x.trim().replace(/ +/g,'-')).join('-');
+    return `https://www.zillow.com/homes/${slug}_rb/`;
+  }
   // Only explicitly named property data may leave the page. In particular,
   // never serialize the surrounding Next.js cache, agent/contact details,
   // account data, mortgage data, or analytics.
@@ -155,8 +162,21 @@
     if (!roots.length) return fail('no-visible-container');
     if (roots.length !== 1) return fail('ambiguous-container');
     const scoped = selector => [...roots[0].querySelectorAll(selector)].filter(node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)).map(node => node.innerText || '');
-    const observation = extract(url, scripts, {status:scoped('[data-testid="home-details-chip"], [data-testid="gallery-status-pill"]'),price:scoped('[data-testid="price"]')}, diagnostic);
+    // Showcase uses a separate overview header. Never read history or nearby
+    // home-status/price-text nodes outside that identity-bound overview.
+    const overviews = [...roots[0].querySelectorAll('[data-testid="property-overview"]')].filter(node => visible(node)
+      && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)
+      && [...node.querySelectorAll('h1')].some(h=>visible(h) && addresses.length && normalize(h.innerText).includes(addresses[0])));
+    if (overviews.length > 1) return fail('ambiguous-container');
+    const overview = overviews[0];
+    const headerText = selector => overview ? [...overview.querySelectorAll(selector)].filter(node=>visible(node)
+      && node.closest('[data-testid="property-overview"]') === overview
+      && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)).map(node=>node.innerText || '') : [];
+    const observation = extract(url, scripts, {status:[...scoped('[data-testid="home-details-chip"], [data-testid="gallery-status-pill"]'),...headerText('[data-testid="home-status"]')],price:[...scoped('[data-testid="price"]'),...headerText('[data-testid="home-info"] .price-text')]}, diagnostic);
     if (!observation) return null;
+    const sourceUrls = addressObjects.map(legacyUrl);
+    if (sourceUrls.length && sourceUrls.every(x=>x && x === sourceUrls[0])
+      && [...roots[0].querySelectorAll('h1')].some(h=>visible(h) && normalize(h.innerText).includes(addresses[0]))) observation.legacyUrl = sourceUrls[0];
     const next = document.querySelector('script#__NEXT_DATA__');
     if (next && addressObjects.length && new Set(addresses).size === 1) {
       const fields = projectCache(next.textContent, zpid, addressObjects[0]);
@@ -196,6 +216,6 @@
     }
     return observation;
   }
-  root.ZillowExtract = {identity,extract,collect,projectCache};
+  root.ZillowExtract = {identity,extract,collect,projectCache,legacyUrl};
   if (typeof module !== 'undefined') module.exports = root.ZillowExtract;
 })(globalThis);

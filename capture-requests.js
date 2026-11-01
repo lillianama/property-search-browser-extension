@@ -1,10 +1,13 @@
 (function(root) {
   const fields = new Set(['price','status','bedrooms','bathrooms','finished_sqft','year_built','lot_sqft','latitude','longitude','property_type','description','mls_number','annual_property_tax','annual_property_tax_year','zestimate','rent_zestimate','monthly_hoa_fee','parking_features','basement','heating','cooling','interior_features','exterior_features','appliances','roof','flooring','property_subtype','stories','unit_count','photo_url','tax_history','listing_history','published_room','unit_mix','parcel_id','structure_sqft','days_on_market','published_assessed_value','published_annual_tax_amount','laundry','windows','foundation','architectural_style','patio_porch','view','sewer','water','gas','listing_terms','has_hoa','new_construction','has_view','room_types','date_on_market']);
-  const fingerprint = o => JSON.stringify([o.zpid,o.price,o.status,o.fields || {}]);
+  const fingerprint = o => JSON.stringify([o.zpid,o.price,o.status,o.fields || {},o.legacyUrl || null]);
   function build(o, uuid = () => crypto.randomUUID()) {
     const base = {zpid:o.zpid,url:o.url,observedAt:o.observedAt};
     const f = o.fields || {};
-    if ([f.parcel_id,f.mls_number].every(v => typeof v === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(v))) base.identity = {parcelId:f.parcel_id,mlsNumber:f.mls_number};
+    if (/^https:\/\/www\.zillow\.com\/homes\/[0-9][A-Za-z0-9-]{4,200}-[A-Z]{2}-[0-9]{5}_rb\/$/.test(o.legacyUrl || '')) {
+      base.identity = {legacyUrl:o.legacyUrl};
+      for (const [key,value] of [['parcelId',f.parcel_id],['mlsNumber',f.mls_number]]) if (typeof value === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(value)) base.identity[key] = value;
+    } else if ([f.parcel_id,f.mls_number].every(v => typeof v === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(v))) base.identity = {parcelId:f.parcel_id,mlsNumber:f.mls_number};
     const make = (field,value) => ({...base,captureId:uuid(),field,value});
     const requests = [make('listing',{status:o.status,...(o.price === undefined ? {} : {price:o.price})})];
     const encoder = new TextEncoder();

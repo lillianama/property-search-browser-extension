@@ -131,7 +131,7 @@ test('toast names each confirmed field', async()=>{ const h=harness(url); h.run(
   const price=node('$500,000'), status=node('For sale'), wrongStatus=node('Pending','456');
   wrongStatus.closest=()=>wrongStatus;
   let children=[status], roots=[];
-  const root=node('', '123');root.contains=()=>false;root.querySelectorAll=s=>s.includes('chip')?children:[price];roots=[root];
+  const root=node('', '123');root.contains=()=>false;root.querySelectorAll=s=>s.includes('property-overview')?[]:s.includes('chip')?children:[price];roots=[root];
   const doc={querySelector:()=>null,querySelectorAll:s=>s.startsWith('script')?[{textContent:script}]:roots};
   const style=()=>({display:'block',visibility:'visible',opacity:'1'});
   children=[status,wrongStatus];assert.equal(extract.collect(doc,url,style).status,'Active');
@@ -145,7 +145,7 @@ test('toast names each confirmed field', async()=>{ const h=harness(url); h.run(
  test('fallback detail container binds canonical URL, JSON-LD street address, and visible heading',()=>{
   const ld=JSON.stringify({url,address:{streetAddress:'123 Example St'},offers:{price:500000}});
   const node=text=>({nodeType:1,innerText:text,getClientRects:()=>[{}],getAttribute:()=>null,closest:()=>null});
-  const heading=node('123 Example St, Portland OR');const root=node('');root.id='hdp-content';root.contains=()=>false;root.querySelectorAll=s=>s==='h1'?[heading]:[node(s.includes('chip')?'For sale':'$500,000')];
+  const heading=node('123 Example St, Portland OR');const root=node('');root.id='hdp-content';root.contains=()=>false;root.querySelectorAll=s=>s.includes('property-overview')?[]:s==='h1'?[heading]:[node(s.includes('chip')?'For sale':'$500,000')];
   let canonical=url;const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:ld}]:[root]};const style=()=>({display:'block',visibility:'visible',opacity:'1'});
   assert.equal(extract.collect(doc,url,style).price,500000);heading.innerText='456 Other St';assert.equal(extract.collect(doc,url,style),null);heading.innerText='123 Example St';canonical=url.replace('123_zpid','456_zpid');assert.equal(extract.collect(doc,url,style),null);
  });
@@ -170,7 +170,7 @@ test('layout-wrapper requires canonical and nested structured address, visible h
   const ld={url:page,offers:{price:500000,itemOffered:{address:{streetAddress:'123 Example St'}}}};
   const node=text=>({nodeType:1,innerText:text,hidden:false,getClientRects(){return this.hidden?[]:[{}]},getAttribute:()=>null,closest:()=>null});
   const heading=node('123 Example St, Portland OR'),status=node('Pending'),price=node('$500,000');
-  const root=node('');root.id='layout-wrapper';root.contains=()=>false;root.querySelectorAll=s=>s==='h1'?[heading]:s.includes('gallery-status-pill')?[status]:[price];
+  const root=node('');root.id='layout-wrapper';root.contains=()=>false;root.querySelectorAll=s=>s.includes('property-overview')?[]:s==='h1'?[heading]:s.includes('gallery-status-pill')?[status]:[price];
   let canonical=page;const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:JSON.stringify(ld)}]:[root]};const style=()=>({display:'block',visibility:'visible',opacity:'1'});
   let result=extract.collect(doc,page,style);assert.equal(result.zpid,'123');assert.equal(result.status,'Pending');assert.equal(result.price,500000);
   canonical=page.replace('123_zpid','456_zpid');assert.equal(extract.collect(doc,page,style),null);canonical=page;
@@ -191,7 +191,7 @@ test('fixed extraction diagnostics distinguish failed evidence gates',()=>{
   check('structured-identity',()=>extract.extract(url,[],evidence,diagnose));
   check('structured-price-mismatch',()=>extract.extract(url,[script],{...evidence,price:['$400,000']},diagnose));
   const node=text=>({nodeType:1,innerText:text,hidden:false,getClientRects(){return this.hidden?[]:[{}]},getAttribute:()=>null,closest:()=>null});
-  const heading=node('123 Example St'),status=node('For sale'),price=node('$500,000'),root=node('');root.id='layout-wrapper';root.contains=()=>false;root.querySelectorAll=s=>s==='h1'?[heading]:s.includes('gallery-status-pill')?[status]:[price];
+  const heading=node('123 Example St'),status=node('For sale'),price=node('$500,000'),root=node('');root.id='layout-wrapper';root.contains=()=>false;root.querySelectorAll=s=>s.includes('property-overview')?[]:s==='h1'?[heading]:s.includes('gallery-status-pill')?[status]:[price];
   let roots=[root],canonical=url,structured={url,offers:{price:500000,itemOffered:{address:{streetAddress:'123 Example St'}}}};
   const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:JSON.stringify(structured)}]:roots},style=()=>({display:'block',visibility:'visible',opacity:'1'});
   const collect=()=>extract.collect(doc,url,style,diagnose);
