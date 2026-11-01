@@ -11,8 +11,7 @@
     }
   }
   function extract(start) {
-    const scripts = [...document.querySelectorAll('script[type="application/ld+json"]')].map(x => x.textContent);
-    return ZillowExtract.extract(start, scripts, {status:[...document.querySelectorAll('[data-testid="home-details-chip"]')].map(x => x.innerText || ''), price:[...document.querySelectorAll('[data-testid="price"]')].map(x => x.innerText || '')});
+    return ZillowExtract.collect(document, start, getComputedStyle);
   }
   async function capture() {
     routeChanged();

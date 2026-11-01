@@ -1,11 +1,31 @@
 {
   "manifest_version": 3,
   "name": "Zillow Observations",
-  "version": "0.1.0",
-  "permissions": ["storage"],
-  "host_permissions": ["https://www.zillow.com/*"],
-  "optional_host_permissions": ["https://*/*"],
-  "background": {"service_worker": "worker.js"},
+  "version": "0.1.1",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.zillow.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
   "options_page": "options.html",
-  "content_scripts": [{"matches": ["https://www.zillow.com/*"], "js": ["extract.js", "content.js"], "run_at": "document_idle"}]
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.zillow.com/*"
+      ],
+      "js": [
+        "extract.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyxUs0GLDHC9yWnHutT+C+lCFuZqC8ptdkz4dqbGqRIogGfV1vDmjZWn/wFdINR+ItAYN4KqKeKbKKC/xKcZfuaE+6NKmefXksY6+EjZFYPo3HENklYgoaoY4NNMrTFygbB4TDdI4NX+KVUG+WA1uNr0Xc5QSzHmmCY0pEp43LdUKnDQG1rk+jr+ssNDMIC2QdD5MSTFTPLzObCoee/jb2qzh6eX4IwOOq8Ftwmj+/wgc4sqsEryjw8LP8LQKNJfpwUarv8vWMEjIFgFTNcdja7qF8nS74MWWW5T0p/bVQAYmYMdIkAgaOrDJEao+lZrDEUuDjRQ5+bHzXEwVYLeRewIDAQAB"
 }

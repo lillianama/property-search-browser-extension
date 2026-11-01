@@ -11,7 +11,8 @@ test('identity, visible status and matching sale price are required', () => {
   for (const evidence of [{status:['For rent'],price:['$500,000']},{status:['Not for sale'],price:['$500,000']},{status:['For sale'],price:['Zestimate $500,000']}]) assert.equal(extract.extract(url,[script],evidence),null);
   assert.equal(extract.extract(url,[JSON.stringify({url:url.replace('123','456'),offers:{price:500000}})],{status:['For sale'],price:['$500,000']}),null);
   for (const statuses of [['For sale','For rent'],['Pending','Sold'],['For sale','Off market'],['Pending','Off-market']]) assert.equal(extract.extract(url,[script],{status:statuses,price:['$500,000']}),null);
-  assert.equal(extract.extract(url,[script],{status:['For sale','Pending'],price:['$500,000']}).status,'Pending');
+  assert.equal(extract.extract(url,[script],{status:['For sale','Pending'],price:['$500,000']}),null);
+  assert.equal(extract.extract(url,[script],{status:['For sale'],price:['$500,000','$490,000']}),null);
   assert.equal(extract.identity('https://evil.test/homedetails/123_zpid/'),null);
   assert.equal(extract.identity('https://user@www.zillow.com/homedetails/123_zpid/'),null);
   assert.equal(extract.identity('http://www.zillow.com/homedetails/123_zpid/'),null);
@@ -39,7 +40,7 @@ function harness(start='https://www.zillow.com/portland-or/') {
   let timer, interval, mutation, now=0, next=0, appended=0, toastText='', beforeExtract=()=>{};
   const location={href:start}, messages=[];
   const document={documentElement:{},body:{appendChild(element){appended++; toastText=element.textContent}},querySelectorAll(sel){beforeExtract();return sel.startsWith('script') ? [{textContent:script}] : [{innerText:sel.includes('chip') ? 'For sale' : '$500,000'}]},createElement(){return {style:{},remove(){}}}};
-  const context={location,document,ZillowExtract:extract,crypto:{randomUUID:()=>`${String(++next).padStart(8,'0')}-1111-4111-8111-111111111111`},Date:{now:()=>now},MutationObserver:class {constructor(f){mutation=f} observe(){}},setTimeout:(f,delay)=>{timer={f,delay};return 1},clearTimeout:()=>{timer=null},setInterval:f=>{interval=f},chrome:{runtime:{sendMessage:message=>new Promise(resolve=>messages.push({message,resolve}))}}};
+  const context={location,document,ZillowExtract:{...extract,collect(document,start){return extract.extract(start, [...document.querySelectorAll('script')].map(x=>x.textContent), {status:document.querySelectorAll('chip').map(x=>x.innerText),price:document.querySelectorAll('price').map(x=>x.innerText)})}},getComputedStyle:()=>({}),crypto:{randomUUID:()=>`${String(++next).padStart(8,'0')}-1111-4111-8111-111111111111`},Date:{now:()=>now},MutationObserver:class {constructor(f){mutation=f} observe(){}},setTimeout:(f,delay)=>{timer={f,delay};return 1},clearTimeout:()=>{timer=null},setInterval:f=>{interval=f},chrome:{runtime:{sendMessage:message=>new Promise(resolve=>messages.push({message,resolve}))}}};
   vm.runInNewContext(fs.readFileSync('content.js','utf8'),context);
   return {location,messages,run(){const t=timer; timer=null; if(t){now+=t.delay; t.f()}}, interval:()=>interval(),mutation:()=>mutation(),get appended(){return appended},get toastText(){return toastText},beforeExtract:f=>beforeExtract=f};
 }
@@ -58,3 +59,27 @@ test('SPA changes during extraction and after response do not send or toast old 
 });
 
 test('toast names each confirmed field', async()=>{ const h=harness(url); h.run(); h.messages[0].resolve({ok:true,changedFields:['price','status']}); await flush(); assert.match(h.toastText,/price/); assert.match(h.toastText,/status/); });
+
+ test('DOM evidence comes only from one visible identified detail container', () => {
+  const node=(text,id=null,hidden=false)=>({nodeType:1,hidden,innerText:text,parentElement:null,getClientRects:()=>[{}],getAttribute:()=>id,closest:()=>null});
+  const price=node('$500,000'), status=node('For sale'), wrongStatus=node('Pending','456');
+  wrongStatus.closest=()=>wrongStatus;
+  let children=[status], roots=[];
+  const root=node('', '123');root.contains=()=>false;root.querySelectorAll=s=>s.includes('chip')?children:[price];roots=[root];
+  const doc={querySelector:()=>null,querySelectorAll:s=>s.startsWith('script')?[{textContent:script}]:roots};
+  const style=()=>({display:'block',visibility:'visible',opacity:'1'});
+  children=[status,wrongStatus];assert.equal(extract.collect(doc,url,style).status,'Active');
+  const hidden=node('Pending',null,true);children=[status,hidden];assert.equal(extract.collect(doc,url,style).status,'Active');
+  children=[status,node('Pending')];assert.equal(extract.collect(doc,url,style),null);
+  children=[status];const other={...root};roots=[root,other];assert.equal(extract.collect(doc,url,style),null);
+  roots=[root];root.getAttribute=()=> '456';assert.equal(extract.collect(doc,url,style),null);
+ });
+ test('manifest has a stable public key identity',()=>{const crypto=require('node:crypto');const m=JSON.parse(fs.readFileSync('manifest.json'));assert.equal(crypto.createPublicKey({key:Buffer.from(m.key,'base64'),format:'der',type:'spki'}).asymmetricKeyType,'rsa');});
+
+ test('fallback detail container binds canonical URL, JSON-LD street address, and visible heading',()=>{
+  const ld=JSON.stringify({url,address:{streetAddress:'123 Example St'},offers:{price:500000}});
+  const node=text=>({nodeType:1,innerText:text,getClientRects:()=>[{}],getAttribute:()=>null,closest:()=>null});
+  const heading=node('123 Example St, Portland OR');const root=node('');root.id='hdp-content';root.contains=()=>false;root.querySelectorAll=s=>s==='h1'?[heading]:[node(s.includes('chip')?'For sale':'$500,000')];
+  let canonical=url;const doc={querySelector:()=>({href:canonical}),querySelectorAll:s=>s.startsWith('script')?[{textContent:ld}]:[root]};const style=()=>({display:'block',visibility:'visible',opacity:'1'});
+  assert.equal(extract.collect(doc,url,style).price,500000);heading.innerText='456 Other St';assert.equal(extract.collect(doc,url,style),null);heading.innerText='123 Example St';canonical=url.replace('123_zpid','456_zpid');assert.equal(extract.collect(doc,url,style),null);
+ });
