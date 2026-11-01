@@ -54,7 +54,7 @@
         'price-ambiguous':'Multiple asking prices found',
         'structured-price-mismatch':'Visible price does not match listing data'
       };
-      showStatus(`Listing details could not be read: ${reasons[readFailure] || 'unknown reading error'} (v0.1.3).`, 'warning');
+      showStatus(`Listing details could not be read: ${reasons[readFailure] || 'unknown reading error'} (v0.1.4).`, 'warning');
       return;
     }
     const key = fingerprint(observation);

@@ -8,6 +8,9 @@ const script = JSON.stringify({url,offers:{price:500000}});
 const flush=()=>new Promise(setImmediate);
 test('identity, visible status and matching sale price are required', () => {
   assert.equal(extract.extract(url,[script],{status:['For sale'],price:['$500,000']}).price,500000);
+  assert.equal(extract.extract(url,[script],{status:['Active'],price:['$500,000']}).status,'Active');
+  for (const status of ['Inactive','Not Active','Active under contract']) assert.equal(extract.extract(url,[script],{status:[status],price:['$500,000']}),null);
+  for (const status of ['Pending','Sold','For rent','Off market']) assert.equal(extract.extract(url,[script],{status:['Active',status],price:['$500,000']}),null);
   for (const evidence of [{status:['For rent'],price:['$500,000']},{status:['Not for sale'],price:['$500,000']},{status:['For sale'],price:['Zestimate $500,000']}]) assert.equal(extract.extract(url,[script],evidence),null);
   assert.equal(extract.extract(url,[JSON.stringify({url:url.replace('123','456'),offers:{price:500000}})],{status:['For sale'],price:['$500,000']}),null);
   for (const statuses of [['For sale','For rent'],['Pending','Sold'],['For sale','Off market'],['Pending','Off-market']]) assert.equal(extract.extract(url,[script],{status:statuses,price:['$500,000']}),null);
