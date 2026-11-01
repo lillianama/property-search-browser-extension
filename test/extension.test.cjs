@@ -19,6 +19,13 @@ test('bounded requests preserve all description bytes, history, rooms and photo 
   const large=captureRequests.build({...observation,fields:{description:'a'.repeat(50000),heating:Array(30).fill('x'.repeat(200))}},uuid);
   assert.equal(large.length,3);assert.equal(large[1].field,'description');assert.equal(large[2].field,'heating');assert.ok(large.every(r=>Buffer.byteLength(JSON.stringify(r))<=256000));
 });
+test('legacy exact identity accompanies the first listing and every capture',()=>{
+  const o={zpid:'53976377',url:'https://www.zillow.com/homedetails/53976377_zpid/',observedAt:'2026-11-01T00:00:00.000Z',status:'Sold',fields:{parcel_id:'R295041',mls_number:'262014608',bedrooms:2}};
+  const requests=captureRequests.build(o,()=> '11111111-1111-4111-8111-111111111111');
+  assert.equal(requests[0].field,'listing');
+  assert.ok(requests.every(r=>r.identity.parcelId==='R295041' && r.identity.mlsNumber==='262014608'));
+  for (const fields of [{mls_number:'262014608'},{parcel_id:'R295041'},{parcel_id:'bad#',mls_number:'262014608'}]) assert.ok(captureRequests.build({...o,fields}).every(r=>!r.identity));
+});
 test('projects only matching allowlisted property data from Next cache',()=>{
   const property={zpid:123,address:{streetAddress:'123 Example St',city:'Portland',state:'OR',zipcode:'97221'},bedrooms:3,bathrooms:2,livingArea:2100,lotSize:13503,description:'Public listing description',mlsid:'12345',zestimate:500000,rentZestimate:2500,resoFacts:{yearBuilt:1921,parkingFeatures:['Driveway']},originalPhotos:[{mixedSources:{jpeg:[{url:'https://photos.zillowstatic.com/fp/one.jpg?private=discard',width:800}]}}],taxHistory:[{year:2025,taxPaid:5000,value:999999}],mortgageZHLRates:{secret:'never'},attributionInfo:{agentEmail:'private@example.test'},adTargets:{secret:'never'}};
   const wrap=p=>JSON.stringify({props:{pageProps:{componentProps:{gdpClientCache:JSON.stringify({a:{property:p}})}}}});
@@ -80,6 +87,14 @@ test('worker sends bounded immutable field requests and aggregates only validate
   assert.equal(result.ok,true);assert.deepEqual(Array.from(result.changedFields),['status','description']);
   assert.equal(bodies.length,3);assert.equal(bodies[1],bodies[2]);assert.ok(bodies.every(x=>Buffer.byteLength(x)<=256000));
   assert.equal(JSON.parse(bodies[0]).value.price,undefined);assert.doesNotMatch(JSON.stringify(result),/not-visible/);
+  const evidence={parcelId:'R295041',mlsNumber:'262014608'};
+  const exact=captures.map(c=>({...c,identity:evidence}));
+  const observed={...base,status:'Off market',fields:{parcel_id:evidence.parcelId,mls_number:evidence.mlsNumber},captures:exact};
+  assert.equal((await new Promise(resolve=>listener({type:'observe',observation:observed},sender,resolve))).ok,true);
+  const count=bodies.length;
+  const mismatch={...observed,fields:{...observed.fields,parcel_id:'R999'}};
+  assert.equal((await new Promise(resolve=>listener({type:'observe',observation:mismatch},sender,resolve))).ok,false);
+  assert.equal(bodies.length,count);
   const tooLarge={...captures[1],value:'x'.repeat(256000)};
   const before=bodies.length;const rejected=await new Promise(resolve=>listener({type:'observe',observation:{...base,status:'Off market',captures:[captures[0],tooLarge]}},sender,resolve));
   assert.equal(rejected.reason,'oversized');assert.equal(bodies.length,before);
