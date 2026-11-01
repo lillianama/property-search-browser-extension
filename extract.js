@@ -70,7 +70,16 @@
       const label = text.trim().toLowerCase().replace(/\s+/g, ' ');
       if (label === 'active' || label === 'for sale') statuses.add('Active');
       else if (label === 'pending' || label === 'contingent') statuses.add('Pending');
-      else if (label === 'sold') statuses.add('Sold');
+      // Match the entire identity-scoped status label, never arbitrary page text.
+      // The amount here is a sold figure, not the current asking price. Dated
+      // sale evidence is collected separately by the listing-history projector.
+      else if (/^sold\b(?: for \$(?:[1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)(?:\.00)?| on \d{1,2}\/\d{1,2}\/\d{4})?$/i.test(label)
+        && (!label.startsWith('sold on ') || (() => {
+          const [month,day,year] = label.slice(8).split('/');
+          const iso = `${year}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`;
+          const date = new Date(iso+'T00:00:00Z');
+          return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10) === iso;
+        })())) statuses.add('Sold');
       else if (label === 'off market' || label === 'off-market') statuses.add('Off market');
       else if (label === 'for rent') statuses.add('For rent');
     }
