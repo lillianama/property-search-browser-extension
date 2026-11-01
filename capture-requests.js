@@ -3,6 +3,8 @@
   const fingerprint = o => JSON.stringify([o.zpid,o.price,o.status,o.fields || {}]);
   function build(o, uuid = () => crypto.randomUUID()) {
     const base = {zpid:o.zpid,url:o.url,observedAt:o.observedAt};
+    const f = o.fields || {};
+    if ([f.parcel_id,f.mls_number].every(v => typeof v === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(v))) base.identity = {parcelId:f.parcel_id,mlsNumber:f.mls_number};
     const make = (field,value) => ({...base,captureId:uuid(),field,value});
     const requests = [make('listing',{status:o.status,...(o.price === undefined ? {} : {price:o.price})})];
     const encoder = new TextEncoder();

@@ -8,7 +8,9 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
     if (!o || !id || ZillowExtract.identity(sender.tab.url) !== id || o.zpid !== id || o.url !== `https://www.zillow.com/homedetails/${id}_zpid/` || Object.keys(o).some(k => !['zpid','url','observedAt','status','price','captureId','fields','captures'].includes(k))) return {ok:false};
     const captures = Array.isArray(o.captures) ? o.captures : [o];
     if (!captures.length || captures.length > 500) return {ok:false,reason:'oversized'};
-    if (o.captures && captures.some((c,i) => !c || c.zpid !== id || c.url !== o.url || c.observedAt !== o.observedAt || Object.keys(c).some(k => !['zpid','url','observedAt','captureId','field','value'].includes(k)) || (i === 0 ? c.field !== 'listing' : !fieldNames.has(c.field) || c.field === 'price' || c.field === 'status'))) return {ok:false};
+    if (o.captures && captures.some((c,i) => !c || c.zpid !== id || c.url !== o.url || c.observedAt !== o.observedAt || Object.keys(c).some(k => !['zpid','url','observedAt','captureId','field','value','identity'].includes(k)) || (i === 0 ? c.field !== 'listing' : !fieldNames.has(c.field) || c.field === 'price' || c.field === 'status'))) return {ok:false};
+    // Evidence must agree with the identity-bound collector fields, never page-supplied routing.
+    if (captures.some(c => c.identity && (Object.keys(c.identity).length !== 2 || c.identity.parcelId !== o.fields?.parcel_id || c.identity.mlsNumber !== o.fields?.mls_number || ![c.identity.parcelId,c.identity.mlsNumber].every(v => typeof v === 'string' && /^[A-Za-z0-9-]{1,40}$/.test(v))))) return {ok:false};
     const bodies = captures.map(c => JSON.stringify(c));
     if (bodies.some(body => new TextEncoder().encode(body).length > 256000)) return {ok:false,reason:'oversized'};
     const tab = await chrome.tabs.get(sender.tab.id); if (ZillowExtract.identity(tab.url) !== id) return {ok:false};
