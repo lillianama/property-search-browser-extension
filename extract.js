@@ -2,22 +2,85 @@
   function identity(url) {
     try { const u = new URL(url); const m = u.pathname.match(/^\/homedetails\/(?:[^/]*\/)?([1-9]\d{0,19})_zpid\/?$/); return u.origin === 'https://www.zillow.com' && !u.username && !u.password && m ? m[1] : null; } catch { return null; }
   }
+  // Only explicitly named property data may leave the page. In particular,
+  // never serialize the surrounding Next.js cache, agent/contact details,
+  // account data, mortgage data, or analytics.
+  function projectCache(nextText, zpid, address) {
+    let next, cache;
+    try {
+      next = JSON.parse(nextText);
+      cache = JSON.parse(next.props.pageProps.componentProps.gdpClientCache);
+    } catch { return null; }
+    if (!cache || typeof cache !== 'object' || Array.isArray(cache)) return null;
+    const norm = value => typeof value === 'string' ? value.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const street = address?.streetAddress;
+    const matches = Object.values(cache).map(x => x && typeof x === 'object' ? x.property : null).filter(p => {
+      const a = p?.address || {};
+      return p && String(p.zpid) === zpid && norm(a.streetAddress || p.streetAddress) === norm(street) && norm(street).length >= 6
+        && (!address.addressLocality || norm(address.addressLocality) === norm(a.city || p.city))
+        && (!address.addressRegion || norm(address.addressRegion) === norm(a.state || p.state))
+        && (!address.postalCode || norm(address.postalCode) === norm(a.zipcode || p.zipcode));
+    });
+    if (matches.length !== 1) return null;
+    const p = matches[0], f = p.resoFacts && typeof p.resoFacts === 'object' ? p.resoFacts : {};
+    const out = {};
+    const number = (key, value, min, max) => { if (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max) out[key] = value; };
+    const string = (key, value) => { if (typeof value === 'string' && value.trim()) out[key] = value.trim(); };
+    const strings = (key, value) => { if (Array.isArray(value) && value.length && value.every(x => typeof x === 'string' && x.trim())) out[key] = value.map(x => x.trim()); };
+    number('bedrooms', p.bedrooms ?? f.bedrooms, 0, 100);
+    number('bathrooms', p.bathrooms ?? f.bathrooms, 0, 100);
+    number('finished_sqft', p.livingArea ?? p.livingAreaValue, 1, 1000000);
+    number('year_built', f.yearBuilt, 1600, 2200);
+    number('lot_sqft', p.lotSize, 1, 1000000000);
+    number('latitude', p.latitude, -90, 90);
+    number('longitude', p.longitude, -180, 180);
+    number('monthly_hoa_fee', p.monthlyHoaFee ?? f.hoaFeeTotal, 0, 1000000);
+    number('zestimate', p.zestimate, 1, 1000000000);
+    number('rent_zestimate', p.rentZestimate, 1, 1000000);
+    number('unit_count', f.numberOfUnitsTotal, 1, 1000);
+    string('property_type', p.homeType || f.homeType);
+    string('description', p.description);
+    string('mls_number', p.mlsid || p.attributionInfo?.mlsId);
+    string('basement', f.basement);
+    for (const [key, source] of Object.entries({parking_features:'parkingFeatures', heating:'heating', cooling:'cooling', interior_features:'interiorFeatures', exterior_features:'exteriorFeatures', appliances:'appliances', roof:'roofType', flooring:'flooring', property_subtype:'propertySubType'})) strings(key, f[source]);
+    number('stories', f.stories, 1, 200);
+    const photo = value => {
+      try { const u = new URL(value); if (u.protocol !== 'https:' || u.username || u.password || !(u.hostname === 'zillowstatic.com' || u.hostname.endsWith('.zillowstatic.com'))) return null; u.search = ''; u.hash = ''; return u.href; } catch { return null; }
+    };
+    const photos = [];
+    if (Array.isArray(p.originalPhotos)) for (const item of p.originalPhotos) {
+      const images = item?.mixedSources?.jpeg;
+      if (!Array.isArray(images)) continue;
+      const candidates = images.map(x => ({url:photo(x?.url),width:Number(x?.width)})).filter(x => x.url);
+      candidates.sort((a,b) => (b.width || 0) - (a.width || 0));
+      if (candidates[0] && !photos.includes(candidates[0].url)) photos.push(candidates[0].url);
+    }
+    if (photos.length) out.photos = photos;
+    const taxes = Array.isArray(p.taxHistory) ? p.taxHistory.filter(t => Number.isInteger(t?.year) && t.year >= 1900 && t.year <= 2200 && typeof t.taxPaid === 'number' && Number.isFinite(t.taxPaid) && t.taxPaid > 0 && t.taxPaid <= 100000000).sort((a,b) => b.year - a.year) : [];
+    if (taxes.length) out.tax_history = taxes.map(t => ({year:t.year,taxPaid:t.taxPaid}));
+    return out;
+  }
   function extract(url, scripts, evidence, diagnostic = () => {}) {
     const fail = reason => { diagnostic(reason); return null; };
     const zpid = identity(url); if (!zpid) return fail('identity');
     if (!evidence || !Array.isArray(evidence.status) || !Array.isArray(evidence.price)) return fail('status-missing');
     if (!evidence.status.length) return fail('status-missing');
-    let status;
-    if (evidence.status.some(text => /\b(?:for\s+rent|sold|off[\s-]+market)\b/i.test(text))) return fail('status-contradictory');
-    const pending = evidence.status.some(text => /^(?:pending|contingent)$/i.test(text.trim()));
-    const active = evidence.status.some(text => /^(?:for sale|active)$/i.test(text.trim()));
-    if (pending && active) return fail('status-contradictory');
-    if (pending) status = 'Pending';
-    else if (active) status = 'Active';
-    else return fail('status-unsupported');
-    if (!evidence.price.length) return fail('price-missing');
+    const statuses = new Set();
+    for (const text of evidence.status) {
+      const label = text.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (label === 'active' || label === 'for sale') statuses.add('Active');
+      else if (label === 'pending' || label === 'contingent') statuses.add('Pending');
+      else if (label === 'sold') statuses.add('Sold');
+      else if (label === 'off market' || label === 'off-market') statuses.add('Off market');
+      else if (label === 'for rent') statuses.add('For rent');
+    }
+    if (statuses.size > 1) return fail('status-contradictory');
+    if (!statuses.size) return fail('status-unsupported');
+    const status = [...statuses][0];
+    const sale = status === 'Active' || status === 'Pending';
+    if (sale && !evidence.price.length) return fail('price-missing');
     const visiblePrices = new Set(evidence.price.map(text => text.trim()));
-    if (visiblePrices.size !== 1) return fail('price-ambiguous');
+    if (sale && visiblePrices.size !== 1) return fail('price-ambiguous');
     const prices = new Set(); let matched = false;
     for (const script of scripts) {
       let data; try { data = JSON.parse(script); } catch { continue; }
@@ -32,8 +95,8 @@
       }
     }
     if (!matched) return fail('structured-identity');
-    if (prices.size !== 1) return fail('structured-price-mismatch');
-    const price = [...prices][0];
+    if (sale && prices.size !== 1) return fail('structured-price-mismatch');
+    const price = sale ? [...prices][0] : undefined;
     return {zpid,url:`https://www.zillow.com/homedetails/${zpid}_zpid/`,observedAt:new Date().toISOString(),status,...(price ? {price} : {})};
   }
   function collect(document, url, style, diagnostic = () => {}) {
@@ -49,14 +112,14 @@
       return true;
     };
     const normalize = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g,'');
-    const addresses = []; let structuredIdentity = false;
+    const addresses = [], addressObjects = []; let structuredIdentity = false;
     for (const script of scripts) {
       let data; try { data = JSON.parse(script); } catch { continue; }
       for (const item of Array.isArray(data) ? data : [data]) {
         if (item && identity(item.url || item['@id'] || '') === zpid) {
           structuredIdentity = true;
           for (const address of [item.address, item.offers?.itemOffered?.address]) {
-            if (typeof address?.streetAddress === 'string') addresses.push(normalize(address.streetAddress));
+            if (typeof address?.streetAddress === 'string') { addresses.push(normalize(address.streetAddress)); addressObjects.push(address); }
           }
         }
       }
@@ -83,8 +146,47 @@
     if (!roots.length) return fail('no-visible-container');
     if (roots.length !== 1) return fail('ambiguous-container');
     const scoped = selector => [...roots[0].querySelectorAll(selector)].filter(node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid)).map(node => node.innerText || '');
-    return extract(url, scripts, {status:scoped('[data-testid="home-details-chip"], [data-testid="gallery-status-pill"]'),price:scoped('[data-testid="price"]')}, diagnostic);
+    const observation = extract(url, scripts, {status:scoped('[data-testid="home-details-chip"], [data-testid="gallery-status-pill"]'),price:scoped('[data-testid="price"]')}, diagnostic);
+    if (!observation) return null;
+    const next = document.querySelector('script#__NEXT_DATA__');
+    if (next && addressObjects.length && new Set(addresses).size === 1) {
+      const fields = projectCache(next.textContent, zpid, addressObjects[0]);
+      if (fields) observation.fields = fields;
+    }
+    if (root.ZillowDomFields) {
+      const scopedVisible = node => visible(node) && (!node.closest('[data-zpid]') || node.closest('[data-zpid]').getAttribute('data-zpid') === zpid);
+      const dom = root.ZillowDomFields.collect(roots[0],scopedVisible);
+      const fields = observation.fields || {};
+      for (const [field,value] of Object.entries(dom)) {
+        if (field === 'features') continue;
+        if (['tax_history','listing_history','rooms'].includes(field)) {
+          const records = [...(fields[field] || []),...value].map(item => {
+            if (field !== 'listing_history' || !item.source) return item;
+            // Listing history carries publisher names, not arbitrary contact
+            // text copied from the page.
+            if (/^(?:RMLS(?: \(OR\))?|Zillow)$/i.test(item.source)) return item;
+            const {source,...safe} = item; return safe;
+          });
+          fields[field] = records.filter((item,index) => records.findIndex(other => JSON.stringify(other) === JSON.stringify(item)) === index);
+        } else if (fields[field] === undefined) fields[field] = value;
+      }
+      const arrayFields = new Set(['heating','cooling','appliances','flooring','parking_features','roof','property_subtype','exterior_features']);
+      for (const [field,value] of Object.entries(dom.features || {})) {
+        if (field === 'published_annual_tax_amount' || field === 'published_assessed_value') {
+          if (!/^\$?\s*[\d,]+(?:\.\d+)?$/.test(value)) continue;
+          const n = Number(value.replace(/[$,\s]/g,''));
+          if (n > 0) fields[field] = n;
+        } else if (field === 'stories' || field === 'days_on_market') {
+          if (/^\d+(?:\.\d+)?$/.test(value)) fields[field] = Number(value);
+        } else if (arrayFields.has(field)) {
+          const values = value.split(',').map(x => x.trim()).filter(Boolean);
+          fields[field] = [...new Set([...(fields[field] || []),...values])];
+        } else if (fields[field] === undefined) fields[field] = value;
+      }
+      if (Object.keys(fields).length) observation.fields = fields;
+    }
+    return observation;
   }
-  root.ZillowExtract = {identity,extract,collect};
+  root.ZillowExtract = {identity,extract,collect,projectCache};
   if (typeof module !== 'undefined') module.exports = root.ZillowExtract;
 })(globalThis);
