@@ -1,5 +1,5 @@
 (() => {
-  let generation = 0, timer, scheduledAt = Infinity, route = location.href, pending = null, saved = '', statusNode, intakePending = null;
+  let generation = 0, timer, scheduledAt = Infinity, route = location.href, pending = null, saved = '', statusNode, intakePending = null, intakeChoice = null;
   function showStatus(message, state = 'working') {
     if (!document.body) return;
     if (!statusNode) {
@@ -27,7 +27,7 @@
   }
   function routeChanged() {
     if (route !== location.href) {
-      route = location.href; generation++; pending = null; intakePending = null; saved = ''; clearStatus();
+      route = location.href; generation++; pending = null; intakePending = null; intakeChoice = null; saved = ''; clearStatus();
       if (ZillowExtract.identity(route)) showStatus('Zillow listing detected. Reading details…');
       schedule();
     }
@@ -39,20 +39,57 @@
   }
   function offerIntake(observation, key, start, turn) {
     if (!observation.legacyUrl || !statusNode?.appendChild) return;
-    const select=document.createElement('select'); let chosenTrack='';
-    select.addEventListener('change',event => { chosenTrack=event.isTrusted && ['house','plex'].includes(select.value) ? select.value : ''; });
-    for (const [value,label] of [['','Choose track'],['house','House / condo'],['plex','Plex']]) {
-      const option=document.createElement('option'); option.value=value; option.textContent=label; select.appendChild(option);
+    // Shadow isolation keeps Zillow's global button rules out of these controls.
+    const host=document.createElement('div');
+    const controls=host.attachShadow({mode:'open'});
+    const style=document.createElement('style');
+    style.textContent=`
+      :host { all: initial; display: block; margin-top: 12px; color-scheme: light; }
+      * { box-sizing: border-box; }
+      [role=radiogroup] { display: flex; gap: 8px; margin-bottom: 10px; }
+      button { all: unset; box-sizing: border-box; display: block; font: 600 14px/20px system-ui, sans-serif; text-align: center; cursor: pointer; border: 2px solid #bca6d9; border-radius: 10px; padding: 9px 14px; color: #26143e; background: #fff; transition: background .12s; }
+      [role=radio] { flex: 1; }
+      [role=radio][aria-checked=true] { background: #e6d5ff; border-color: #e6d5ff; color: #26143e; box-shadow: inset 0 0 0 2px #563094; }
+      button:hover:enabled { background: #f0e8fa; border-color: #fff; }
+      button:focus-visible { outline: 3px solid #ffe48a; outline-offset: 3px; }
+      [data-add] { width: 100%; background: #ffe48a; border-color: #ffe48a; color: #26143e; }
+      [data-add]:hover:enabled { background: #fff0b8; border-color: #fff0b8; }
+      button:disabled { cursor: default; background: #ded7e7; color: #51445f; border-color: #b9adc8; box-shadow: none; }
+      [role=radio]:disabled[aria-checked=true] { border-color: #6a537e; box-shadow: inset 0 0 0 2px #6a537e; }
+    `;
+    controls.appendChild(style);
+    const group=document.createElement('div'); group.setAttribute('role','radiogroup'); group.setAttribute('aria-label','Watchlist track');
+    let chosenTrack=intakePending?.key===key ? intakePending.body.track : intakeChoice?.key===key ? intakeChoice.track : 'house';
+    const radios=[];
+    function choose(track, focus=false) {
+      chosenTrack=track; intakeChoice={key,track};
+      for (const radio of radios) { const selected=radio.value===track; radio.setAttribute('aria-checked',String(selected)); radio.tabIndex=selected ? 0 : -1; if (focus && selected) radio.focus(); }
     }
-    if (intakePending?.key===key) { select.value=intakePending.body.track; chosenTrack=intakePending.body.track; select.disabled=true; }
-    const button=document.createElement('button'); button.type='button'; button.textContent='Add to Watchlist';
+    for (const [value,label] of [['house','House'],['plex','Plex']]) {
+      const radio=document.createElement('button'); radio.type='button'; radio.value=value; radio.textContent=label; radio.setAttribute('role','radio');
+      radio.disabled=intakePending?.key===key;
+      radio.addEventListener('click',event=>{ if (event.isTrusted && !radio.disabled) choose(value); });
+      radio.addEventListener('keydown',event=>{
+        if (!event.isTrusted || radio.disabled) return;
+        let next;
+        if (['ArrowRight','ArrowDown','ArrowLeft','ArrowUp'].includes(event.key)) next=chosenTrack==='house'?'plex':'house';
+        else if (event.key==='Home') next='house';
+        else if (event.key==='End') next='plex';
+        else if (event.key===' ' || event.key==='Enter') next=value;
+        if (next) { event.preventDefault(); event.stopPropagation(); choose(next,true); }
+      });
+      radios.push(radio); group.appendChild(radio);
+    }
+    choose(chosenTrack);
+    controls.appendChild(group);
+    const button=document.createElement('button'); button.type='button'; button.setAttribute('data-add',''); button.textContent='Add to Watchlist';
     button.addEventListener('click',async event => {
-      if (!event.isTrusted || !['house','plex'].includes(chosenTrack) || select.value!==chosenTrack || button.disabled) return;
+      if (!event.isTrusted || !['house','plex'].includes(chosenTrack) || button.disabled) return;
       event.stopPropagation();
       const current=extract(start);
       if (location.href!==start || generation!==turn || !current || fingerprint(current)!==key || current.legacyUrl!==observation.legacyUrl) { showStatus('Listing changed. Refresh and try again.','warning'); return; }
       if (!intakePending || intakePending.key!==key || intakePending.body.track!==chosenTrack) intakePending={key,body:{action:'watchlist-intake',zpid:observation.zpid,url:observation.url,legacyUrl:observation.legacyUrl,captureId:crypto.randomUUID(),observedAt:new Date().toISOString(),track:chosenTrack,identity:Object.fromEntries([['mlsNumber',observation.fields?.mls_number],['parcelId',observation.fields?.parcel_id]].filter(([,v])=>typeof v==='string' && /^[A-Za-z0-9-]{1,40}$/.test(v))),listing:{status:observation.status,...(observation.price===undefined?{}:{price:observation.price})}}};
-      const request=intakePending; button.disabled=true; select.disabled=true;
+      const request=intakePending; button.disabled=true; radios.forEach(radio=>{radio.disabled=true;});
       let result; try { result=await chrome.runtime.sendMessage({type:'watchlist-intake',observation,intake:request.body}); } catch {}
       if (location.href!==start || generation!==turn || intakePending!==request) return;
       const after=extract(start);
@@ -60,9 +97,9 @@
       if (result?.ok && result.status==='created') { intakePending=null; saved=''; showStatus('Added to Watchlist. Saving listing details…'); schedule(0); }
       else if (result?.ok && result.status==='existing') { intakePending=null; showStatus('Already tracked; existing decisions preserved.','success'); }
       else if (result?.ok && result.status==='conflict') { intakePending=null; showStatus('Listing identity needs review.','warning'); }
-      else { button.disabled=false; select.disabled=true; button.textContent='Retry Add to Watchlist'; }
+      else { button.disabled=false; button.textContent='Retry Add to Watchlist'; }
     });
-    statusNode.appendChild(select); statusNode.appendChild(button);
+    controls.appendChild(button); statusNode.appendChild(host);
   }
   async function capture() {
     routeChanged();

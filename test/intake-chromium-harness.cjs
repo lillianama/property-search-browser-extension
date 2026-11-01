@@ -15,10 +15,10 @@ const bridgeCode='import sys,socket,select,os\ns=socket.create_connection(("127.
   await page.exposeFunction('__novaSend',message=>new Promise(resolve=>listener(message,{id:'extension',frameId:0,tab:{id:1,url:canonical},url:canonical},r=>{acks.push(r);resolve(r)})));
   await page.evaluate(()=>{globalThis.chrome={runtime:{getManifest:()=>({version:'test'}),sendMessage:m=>globalThis.__novaSend(m)}}});
   for(const file of ['dom-fields.js','capture-requests.js','extract.js','content.js'])await page.addScriptTag({content:fs.readFileSync(file,'utf8')});
-  await page.waitForSelector('[data-nova-nest] button',{timeout:10000});
-  await page.$eval('[data-nova-nest] select',el=>{el.value='house';el.dispatchEvent(new Event('change',{bubbles:true}))});await page.$eval('[data-nova-nest] button',el=>el.click());
+  await page.waitForSelector('[data-nova-nest] div >>> [data-add]',{timeout:10000});
+  await page.$eval('[data-nova-nest] div >>> [data-add]',el=>el.click());
   if(bodies.some(x=>x.action))throw Error('synthetic click invoked intake');
-  await page.focus('[data-nova-nest] select');await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await page.click('[data-nova-nest] button');
+  await page.click('[data-nova-nest] div >>> [data-add]');
   await page.waitForFunction(()=>/Saved|Checked; no changes/.test(document.querySelector('[data-nova-nest]')?.textContent||''),{timeout:15000});
   const first=bodies.find(x=>x.field==='listing'),again=bodies.filter(x=>x.field==='listing');if(!first||again.length<2||first.captureId!==again[1].captureId||!bodies.some(x=>x.action==='watchlist-intake')||!bodies.some(x=>x.field==='bedrooms'))throw Error('capture batch not reused');
   console.log(JSON.stringify({syntheticRejected:true,listingRetries:again.length,identicalCapture:first.captureId===again[1].captureId,requests:bodies.length,acks}));await page.close();
